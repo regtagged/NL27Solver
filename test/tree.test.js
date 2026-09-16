@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  BB, ACTIVE, FOLDED, ALLIN, PRE_DRAW, POST_DRAW,
+  BB, ACTIVE, FOLDED, ALLIN, PRE_DRAW, POST_DRAW, DRAWING, postDrawOrder,
   defaultConfig, positionNames, preDrawOrder, initialState, legalActions,
   applyAction, buildTree, potOf,
 } from '../lib/tree.js';
@@ -110,12 +110,28 @@ test('a raise has to raise: an opening shove cannot be re-raised to 3bb', () => 
 test('after the draw the small blind acts first and may bet b25, b100 or all-in', () => {
   const config = { ...defaultConfig(), players: 3, nodeLimit: 2e6 };
   const tree = buildTree(config);
-  const draw = tree.nodes.find((node) => node.kind === 'draw' && node.next >= 0);
-  const after = tree.nodes[draw.next];
-  assert.equal(after.kind, 'decision');
-  assert.equal(after.street, POST_DRAW);
-  assert.equal(after.seat, 0, 'the small blind is first after the draw');
+  assert.deepEqual(postDrawOrder(3), [0, 1, 2], 'the small blind leads after the draw');
+  const after = tree.nodes.find((node) => node.kind === 'decision'
+    && node.street === POST_DRAW && node.seat === 0);
+  assert.ok(after, 'expected the small blind to get a post-draw decision');
   assert.deepEqual(after.actions.map((a) => a.label), ['check', 'b25', 'b100', 'all-in']);
+});
+
+test('the draw is a chain of decisions, one per survivor, three options each', () => {
+  const config = { ...defaultConfig(), players: 3, nodeLimit: 2e6 };
+  const tree = buildTree(config);
+  const draws = tree.nodes.filter((node) => node.kind === 'decision' && node.street === DRAWING);
+  assert.ok(draws.length > 0, 'expected draw decisions in the full tree');
+  for (const node of draws) {
+    assert.deepEqual(node.actions.map((a) => a.label), ['pat', 'd1', 'd2']);
+  }
+});
+
+test('a pre-draw-only tree stops at the draw instead of playing it out', () => {
+  const config = { ...defaultConfig(), players: 3, stopAtDraw: true, nodeLimit: 2e6 };
+  const tree = buildTree(config);
+  assert.ok(tree.nodes.some((node) => node.kind === 'draw'), 'the draw is a leaf here');
+  assert.ok(!tree.nodes.some((node) => node.street === DRAWING), 'and is never played out');
 });
 
 test('facing a bet after the draw, the only raise is all-in', () => {
