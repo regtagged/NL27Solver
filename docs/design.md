@@ -136,26 +136,69 @@ solved, with b25, b100 and bAI exactly as specified — in its own run rather th
 jointly, which is also what lets it be solved *better* than a joint solve could
 have afforded.
 
-## The draw
+## The draw: pat, one, or two
 
 Thirty-two discard subsets per hand is far more than a player considers, and
-most are dominated outright. The options offered at a draw node are the family
-actually in tension:
+most are dominated outright. Three options are offered:
 
-- **Stand pat.** Always available, which is what makes snowing fall out of the
-  solve rather than needing to be hand-coded — if standing pat with a broken
-  hand shows a profit, CFR will find it.
-- **Draw one**, keeping the best four low cards. Where two keeps are genuinely
-  close — 8-7-5-4-2 can pitch the eight or the seven — both are offered.
-- **Draw two**, keeping the best three.
-- **Draw three**, keeping the best two.
+- **Stand pat.** Always available to every hand, which is what makes snowing
+  fall out of the solve rather than needing to be hand-coded — if standing pat
+  with a broken hand shows a profit, CFR will find it.
+- **Draw one**, keeping the four lowest distinct ranks.
+- **Draw two**, keeping the three lowest distinct ranks.
 
-Drawing four or five is never offered. That is an assumption, and a cheap one to
-revisit.
+**Drawing three or more is not offered.** Players stand pat or take one, and
+take two only from the big blind or as a late-position opener in a single-raised
+pot; the third card would buy a large abstraction for a line that is rarely
+correct. The cost is real and worth naming: a hand like A-K-Q-8-6 would draw
+three in a real game and here cannot, so it is simply a fold.
+
+Keeping the *lowest* distinct ranks is not a shortcut, it is the play. Holding
+8-7-5-4-2 and pitching the eight leaves 7-5-4-3-2 and 7-6-5-4-2 live; pitching
+the seven cannot make better than an eight-five. A pair is never held back, so a
+duplicated rank is simply skipped. Where a hand holds two copies of a rank the
+keep takes the copy that breaks a flush — which is why flush risk survives only
+on the four or five cards that are genuinely stuck in one suit.
 
 The draw does not branch the betting tree: each survivor picks from their own
 options at their own information set, so it is one node saying "this happens
 here" rather than a fan of every combination of seven draws.
+
+## The buckets, measured
+
+Restricting the draw to three options is what lets the bucketing be derived from
+the game instead of clustered by similarity. With only pat, d1 and d2 available,
+everything a hand is worth pre-draw is what those three yield — its made low if
+it has one, its four-card keep, its three-card keep, and whether either keep is
+stuck in one suit. `npm run measure:buckets` counts the result.
+
+Spelled out in full that is **6,046 buckets**, and at 108,748 pre-draw action
+slots it wants 4.90 GB. Most of that detail is on hands nobody plays: there are
+1,482 distinct ace-high pat hands, and they share one strategy. So each
+dimension has a ceiling, above which only the high card is carried:
+
+| pat | d1 | d2 | Buckets | Pre-draw strategy | |
+| --- | --- | --- | --- | --- | --- |
+| A | A | A | 6,046 | 4.90 GB | every hand spelled out |
+| K | Q | J | 5,180 | 4.20 GB | barely collapsed |
+| **J** | **T** | **9** | **3,452** | **2.80 GB** | the default |
+| J | 9 | 8 | 2,559 | 2.07 GB | tighter one-card draws |
+| 9 | 8 | 7 | 1,710 | 1.39 GB | only what gets played |
+
+The default keeps pat hands through a jack, one-card draws through a ten and
+two-card draws through a nine — the hands that are actually played differently —
+and collapses the rest to their high card. **3,452 buckets, 2.80 GB.**
+
+This is not clustering. Two hands merge only when all three of their options are
+above the ceiling, which is to say when neither is a hand and neither has a
+draw. A pat A-K-Q-J-9 and a pat A-K-Q-8-6 are one bucket because both are pat
+ace-highs that draw one to a king and two to a queen — with d3 unavailable there
+is nothing left to tell them apart. Two draws to a nine stay separate.
+
+The earlier estimate in this document was 1,000–1,500 buckets. That was wrong:
+the honest count at a defensible ceiling is 3,452, and the pre-draw solve needs
+2.80 GB rather than 830 MB. It still fits, with room to tighten to 2.07 GB by
+dropping one-card detail from a ten to a nine.
 
 ## The algorithm
 
@@ -177,18 +220,17 @@ are the same run.
   every hand in the deck once into a 5 MB `Uint16Array` of dense ranks.
 - `lib/tree.js` — the betting tree from a config, as a DAG so that two action
   sequences reaching the same chips are one node.
+- `lib/abstraction.js` — hand to bucket and the draw options, with the ceilings
+  that decide how much detail is carried.
 - `test/` — the rules that are easy to get wrong, pinned.
 
 ## What is next
 
-1. `lib/abstraction.js` — hand to bucket, and the draw option set. The bucketing
-   has to be strategic rather than arbitrary: pat rank, best one-card draw, best
-   two-card draw, flush risk. This is the piece the memory table is waiting on.
-2. `lib/rollout.js` — the fixed post-draw policy that terminates the pre-draw
+1. `lib/rollout.js` — the fixed post-draw policy that terminates the pre-draw
    solve.
-3. `lib/solve.js` — MCCFR over the pre-draw tree, with checkpoints.
-4. `lib/subgame.js` — solving one post-draw subgame on demand.
-5. `serve.js` and `public/` — entering a configuration and browsing the result.
+2. `lib/solve.js` — MCCFR over the pre-draw tree, with checkpoints.
+3. `lib/subgame.js` — solving one post-draw subgame on demand.
+4. `serve.js` and `public/` — entering a configuration and browsing the result.
 
 ## The open risks, honestly
 
@@ -200,7 +242,12 @@ are the same run.
   under a fixed post-draw policy means the pre-draw strategy is only as good as
   that policy. The fix is to iterate — solve subgames, feed their values back as
   the rollout, re-run — and whether that converges usefully is untested.
-- **1,000–1,500 buckets is asserted, not yet measured.** That pre-draw 2-7 has
-  roughly that many strategically distinct hands is reasoning about the game,
-  not a count. `lib/abstraction.js` is where it gets checked, and if the honest
-  number is 4,000 the pre-draw solve needs 3.3 GB and this plan changes again.
+- **2.80 GB is a lot to ask of a desktop.** The pre-draw solve needs Node run
+  with a raised heap, and the ceilings are the dial if it will not fit. What has
+  not been tried is varying detail by depth: the opening decision wants every
+  bucket, while a player facing an all-in four seats later is choosing between
+  folding and calling and needs far fewer.
+- **No-draw-three is a real restriction, not just an abstraction.** Hands that
+  would take three in a live game fold here. That was a deliberate call, and it
+  is the one place the solve answers a slightly different game than the one
+  being played.

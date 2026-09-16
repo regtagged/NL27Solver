@@ -23,9 +23,14 @@ npm run measure
 npm run measure:tree
 ```
 
-`measure` recounts the hand space from the deck; `measure:tree` builds the
-seven-handed tree and reports what a solve over it would cost. Both print the
-numbers quoted in the design, so neither can quietly go stale.
+```bash
+npm run measure:buckets
+```
+
+`measure` recounts the hand space from the deck, `measure:tree` builds the
+seven-handed tree and reports what a solve over it would cost, and
+`measure:buckets` prices the hand abstraction at each level of detail. All three
+print numbers quoted in the design, so none of them can quietly go stale.
 
 ## Where it is
 
@@ -38,9 +43,11 @@ The foundation is in place and tested:
   in the deck into 5 MB of dense ranks in about a quarter of a second.
 - **The betting tree** — 1,208,412 nodes for the seven-handed 40bb game, built
   as a DAG in about four seconds.
+- **The hand abstraction** — every hand in the deck mapped to one of 3,452
+  strategy buckets, derived from what pat, draw-one and draw-two are each worth
+  rather than clustered by similarity.
 
-The abstraction, the rollout, the solver and the interface are next, in that
-order. `docs/design.md` lists them and the risk each one carries.
+The rollout, the solver and the interface are next, in that order. `docs/design.md` lists them and the risk each one carries.
 
 ## The two rules that make this game
 
