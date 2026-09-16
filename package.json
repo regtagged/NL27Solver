@@ -1,0 +1,14 @@
+{
+  "name": "drawsolver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A No Limit 2-7 Single Draw pre-draw solver",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "measure": "node scripts/measure-classes.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
