@@ -153,12 +153,33 @@ pot; the third card would buy a large abstraction for a line that is rarely
 correct. The cost is real and worth naming: a hand like A-K-Q-8-6 would draw
 three in a real game and here cannot, so it is simply a fold.
 
-Keeping the *lowest* distinct ranks is not a shortcut, it is the play. Holding
-8-7-5-4-2 and pitching the eight leaves 7-5-4-3-2 and 7-6-5-4-2 live; pitching
-the seven cannot make better than an eight-five. A pair is never held back, so a
-duplicated rank is simply skipped. Where a hand holds two copies of a rank the
-keep takes the copy that breaks a flush — which is why flush risk survives only
-on the four or five cards that are genuinely stuck in one suit.
+### Which four cards to keep
+
+The obvious rule — keep the lowest distinct ranks — is **wrong**, and wrong for
+a reason peculiar to this game. Straights count against you, so the smoothest
+four cards in a hand can be the worst four to hold. Enumerated over all 48
+replacements:
+
+| Keep | Makes an 8 or better | Straight outs |
+| --- | --- | --- |
+| 7-5-4-3 | 8 / 48 | **4** — any six |
+| **8-5-4-3** | **12 / 48** | **0** — cannot make one |
+| 7-6-5-4 | 4 / 48 | **8** — any three or eight |
+
+8-5-4-3 makes a good hand half again as often as 7-5-4-3 and has no straight to
+brick into; all 7-5-4-3 holds over it is the four deuces that make the nuts. And
+7-6-5-4, which looks like the best four cards a hand could contain, is a trap:
+it makes an eight twice as rarely as it makes a straight.
+
+So the keep is **chosen by score** in `lib/draws.js`, not by position. A hand
+holding 4-5-6-7-9 keeps 4-5-6-9 and throws the seven. A pair is never held back.
+Where a rank is duplicated the keep takes the copy that breaks a flush, which is
+why flush risk survives only on cards genuinely stuck in one suit.
+
+Choosing is done on ranks alone and flush risk is scored afterwards. A
+three-flush kept on a two-card draw backs into a flush about 4% of the time,
+which almost never changes which subset is best, and leaving it out of the
+choice lets the decision be cached per rank-set instead of per hand.
 
 The draw does not branch the betting tree: each survivor picks from their own
 options at their own information set, so it is one node saying "this happens
@@ -222,15 +243,38 @@ are the same run.
   sequences reaching the same chips are one node.
 - `lib/abstraction.js` — hand to bucket and the draw options, with the ceilings
   that decide how much detail is carried.
+- `lib/draws.js` — what a draw is worth, and therefore which cards to keep.
+- `lib/rollout.js` — the draw, one round of post-draw betting under a fixed
+  policy, and the pot split, side pots included.
+- `lib/solve.js` — MCCFR over the pre-draw tree, with CFR+ regret flooring and
+  linear averaging.
 - `test/` — the rules that are easy to get wrong, pinned.
+
+## Where the solver actually is
+
+`npm run solve` runs it. Seven-handed at 40bb it holds **2.4 GB** and turns
+**~21,000 iterations a second**; three-handed, ~72,000.
+
+Three-handed converges usefully in about five million iterations — fold
+frequencies come out monotone down the strength ladder, and the pure trash folds
+90–99%. **Seven-handed does not converge in anything like that.** The opening
+seats are only reached when everyone before them folds, so at a million
+iterations most buckets at those nodes have never been visited and still show
+the uniform strategy they started with. The arithmetic is unforgiving: 49,796
+pre-draw decisions times 3,463 buckets is 172 million information sets, and
+reaching each of them a useful number of times is a run measured in hours, not
+minutes.
+
+CFR+ and linear averaging are what made three-handed work at all — before them
+the same run produced strategies that were not monotone in hand strength and had
+the worst hand in the ladder limping 81%.
 
 ## What is next
 
-1. `lib/rollout.js` — the fixed post-draw policy that terminates the pre-draw
-   solve.
-2. `lib/solve.js` — MCCFR over the pre-draw tree, with checkpoints.
-3. `lib/subgame.js` — solving one post-draw subgame on demand.
-4. `serve.js` and `public/` — entering a configuration and browsing the result.
+1. Checkpointing, so a long run survives being stopped. This is what makes
+   seven-handed practical at all.
+2. `lib/subgame.js` — solving one post-draw subgame on demand.
+3. `serve.js` and `public/` — entering a configuration and browsing the result.
 
 ## The open risks, honestly
 

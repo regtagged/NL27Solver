@@ -19,11 +19,12 @@ test('a made low is recognised, and a straight or flush is not one', () => {
   assert.equal(analyse(of('Ac9d7h4s2c')).made, true, 'ace-high is still a made low, just a bad one');
 });
 
-test('drawing one keeps the four lowest distinct ranks', () => {
-  // Pitching the eight leaves 7-5-4-3-2 and 7-6-5-4-2 live; pitching the seven
-  // cannot make better than an eight-five.
-  assert.deepEqual(ranksOf(keepFor(of('8c7d5h4s2c'), DRAW_ONE)), ranksOf(of('7d5h4s2c')));
-  assert.deepEqual(ranksOf(keepFor(of('7c5d4h3s2c'), DRAW_TWO)), ranksOf(of('4h3s2c')));
+test('the keep is chosen by what it draws to, not by which cards are lowest', () => {
+  // Holding 7-5-4-3-2 and drawing two, the lowest three is 2-3-4 - which needs
+  // a 5 and a 6 and so can back into a straight. 2-3-7 cannot, and wins.
+  assert.deepEqual(ranksOf(keepFor(of('7c5d4h3s2c'), DRAW_TWO)), [0, 1, 5]);
+  // With no eight in the hand, 7-5-4-3 is the best four available and is kept.
+  assert.deepEqual(ranksOf(keepFor(of('Kc7d5h4s3c'), DRAW_ONE)), [1, 2, 3, 5]);
 });
 
 test('a pair is never kept back, so the pair rank is simply skipped', () => {
