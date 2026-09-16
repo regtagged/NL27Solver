@@ -1,11 +1,11 @@
 # DrawSolver
 
-A solver for **No Limit 2-7 Single Draw**: seven-handed, 40bb, limp and 3x
-opens with all-in as the only 3-bet, and b25 / b100 / bAI after the draw.
+A solver for **No Limit 2-7 Single Draw**: seven-handed, 40bb, 3x opens with
+all-in as the only 3-bet, and b25 / b100 / bAI after the draw.
 
-`docs/design.md` is the design and the reasoning — in particular why the two
-betting streets are solved apart rather than together, which is a measurement
-and not a preference. This file is what works today and how to run it.
+`docs/design.md` is the design and the reasoning — in particular what pruning
+the tree to how the game is actually played did to the cost of solving it:
+204 GB to 0.9 GB. This file is what works today and how to run it.
 
 No build step and no dependencies. Node is the only requirement.
 
@@ -27,6 +27,10 @@ npm run measure:tree
 npm run measure:buckets
 ```
 
+```bash
+npm run solve -- --players 7 --iterations 20000000
+```
+
 `measure` recounts the hand space from the deck, `measure:tree` builds the
 seven-handed tree and reports what a solve over it would cost, and
 `measure:buckets` prices the hand abstraction at each level of detail. All three
@@ -41,13 +45,18 @@ The foundation is in place and tested:
   deck, matching the other tools here.
 - **Hand strength** — a full 2-7 evaluator, with a table that scores every hand
   in the deck into 5 MB of dense ranks in about a quarter of a second.
-- **The betting tree** — 1,208,412 nodes for the seven-handed 40bb game, built
-  as a DAG in about four seconds.
+- **The betting tree** — 6,392 nodes for the seven-handed 40bb game, built as a
+  DAG in 22 milliseconds. No limping, at most two callers of an open, and no
+  cold-calling a 3-bet; all three are config switches.
 - **The hand abstraction** — every hand in the deck mapped to one of 3,452
   strategy buckets, derived from what pat, draw-one and draw-two are each worth
   rather than clustered by similarity.
 
-The rollout, the solver and the interface are next, in that order. `docs/design.md` lists them and the risk each one carries.
+- **The solver** — Monte Carlo CFR with CFR+ and linear averaging. Seven-handed,
+  twenty million iterations run in about seven minutes and hold 30 MB, and the
+  opening ranges come out monotone in hand strength.
+
+Solving both streets together, and then the interface, are next. `docs/design.md` lists them and the risk each one carries.
 
 ## The two rules that make this game
 

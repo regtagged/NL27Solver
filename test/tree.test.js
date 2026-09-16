@@ -32,14 +32,19 @@ test('blinds come out of stacks, and the big blind is the bet to match', () => {
   assert.equal(potOf(state), 150);
 });
 
-test('an opener may limp or make it 3x, and nothing in between', () => {
+test('an opener raises or folds, and cannot limp', () => {
   const config = defaultConfig();
+  assert.deepEqual(labels(initialState(config), config), ['fold', 'raise 3x', 'all-in']);
+});
+
+test('limping comes back when it is switched on', () => {
+  const config = { ...defaultConfig(), allowLimp: true };
   assert.deepEqual(labels(initialState(config), config),
     ['fold', 'limp', 'raise 3x', 'all-in']);
 });
 
 test('the open grows by a big blind for every limper already in', () => {
-  const config = defaultConfig();
+  const config = { ...defaultConfig(), allowLimp: true };
   let state = initialState(config);
   state = take(state, config, 'limp'); // UTG
   state = take(state, config, 'limp'); // LJ
@@ -49,7 +54,7 @@ test('the open grows by a big blind for every limper already in', () => {
 });
 
 test('the big blind gets an option when the pot is limped to it', () => {
-  const config = defaultConfig();
+  const config = { ...defaultConfig(), allowLimp: true };
   let state = initialState(config);
   for (let i = 0; i < 5; i += 1) state = take(state, config, 'fold');
   state = take(state, config, 'limp'); // SB completes
@@ -62,9 +67,44 @@ test('facing a raise, the only raise back is all-in', () => {
   let state = initialState(config);
   state = take(state, config, 'raise 3x');
   assert.deepEqual(labels(state, config), ['fold', 'call', 'all-in']);
+});
+
+test('the open may be flat-called twice, and no more', () => {
+  const config = defaultConfig();
+  let state = initialState(config);
+  state = take(state, config, 'raise 3x');
+  state = take(state, config, 'call');
+  assert.ok(labels(state, config).includes('call'), 'one caller still leaves room');
+  state = take(state, config, 'call');
+  assert.deepEqual(labels(state, config), ['fold', 'all-in'], 'two callers is the cap');
+});
+
+test('a 3-bet shove cannot be cold-called, but the opener may call it', () => {
+  const config = defaultConfig();
+  let state = initialState(config);
+  state = take(state, config, 'raise 3x'); // UTG opens
+  state = take(state, config, 'all-in'); // LJ 3-bets
+  assert.deepEqual(labels(state, config), ['fold'],
+    'the next seat is cold and has nothing to jam over an all-in');
+
+  // Round to the opener, who has money in and so is not cold-calling.
+  for (let i = 0; i < 5; i += 1) state = take(state, config, 'fold');
+  assert.deepEqual(labels(state, config), ['fold', 'call']);
+});
+
+test('an opening shove is not a 3-bet, so calling it is not a cold call', () => {
+  const config = defaultConfig();
+  let state = initialState(config);
   state = take(state, config, 'all-in');
-  assert.deepEqual(labels(state, config), ['fold', 'call'],
-    'facing an all-in at equal stacks there is nothing to raise to');
+  assert.deepEqual(labels(state, config), ['fold', 'call']);
+});
+
+test('a raise has to raise: an opening shove cannot be re-raised to 3bb', () => {
+  const config = defaultConfig();
+  let state = initialState(config);
+  state = take(state, config, 'all-in');
+  assert.ok(!labels(state, config).includes('raise 3x'),
+    'raising to less than the price of calling is not a raise');
 });
 
 test('after the draw the small blind acts first and may bet b25, b100 or all-in', () => {

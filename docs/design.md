@@ -12,14 +12,19 @@ Pre-draw the action set is deliberately narrow:
 
 | Facing | Actions |
 | --- | --- |
-| No raise | fold, limp, raise to 3x, all-in |
-| A raise | fold, call, all-in |
-| An all-in | fold, call |
+| Nobody in | fold, raise to 3x, all-in |
+| An open, fewer than two callers | fold, call, all-in |
+| An open, two callers already | fold, all-in |
+| A 3-bet shove, having already put money in | fold, call |
+| A 3-bet shove, cold | fold (or 4-bet jam, with chips to do it) |
 
 The only 3-bet size is all-in. That is a real simplification but not a damaging
-one at 40bb, where a 3-bet-to-9bb-and-fold line barely exists in this game. An
-open grows by a big blind for each limper already in, so 3x over two limpers is
-5bb — that is a convention, and `perLimper` in the config turns it off.
+one at 40bb, where a 3-bet-to-9bb-and-fold line barely exists in this game.
+
+Limping, unlimited callers and cold-calling a 3-bet are all switched off by
+`allowLimp`, `maxOpenCalls` and `coldCallShoves` in the config. They are not
+cosmetic: turning them back on is the difference between a tree that fits in
+0.9 GB and one that needs 204 GB.
 
 After the draw the sizes are **b25**, **b100** and **bAI** — a quarter pot, pot,
 and the remaining stack. Facing a bet the only raise is all-in, which is the
@@ -70,71 +75,60 @@ which ranks sit in the flush suit whenever four or five share one. It is
 lossless except that a three-flush kept on a two-card draw backs into a flush
 about 4% of the time, and is scored as though it could not.
 
-Sixteen thousand classes is not, however, what the solver can afford to hold.
+On the unpruned tree that was far more detail than a solve could hold, and the
+whole of the next two sections was about getting round it. On the pruned tree it
+is affordable outright.
 
-## What the tree actually costs
+## What the tree costs, and what pruning did to it
 
-`npm run measure:tree` builds the seven-handed 40bb tree and counts it. As
-specified it is **1,208,412 nodes** and takes about four seconds:
+Two measurements, and the second overturns the first.
 
-| Node kind | Count |
-| --- | --- |
-| decision | 759,635 |
-| showdown | 306,807 |
-| fold | 118,355 |
-| draw | 23,615 |
+**As first specified** — limping allowed, any number of callers, cold calls of
+3-bets permitted — the seven-handed 40bb tree was **1,208,412 nodes**. Node count
+was never the problem; the memory a solve needs is decisions times actions times
+buckets times the two float accumulators CFR keeps per action, and at the 16,757
+classes the hand space supports that came to **204 GB**. Nothing rescued it: even
+200 buckets wanted 2.4 GB, and 200 buckets cannot tell a pat eight from a
+one-card draw to a seven.
 
-Those decisions are very unevenly split: **49,796 pre-draw and 709,839 after the
-draw.** A player only holds strategy where that player acts, so the memory a
-solve needs is decisions times actions times hand buckets times the two float
-accumulators CFR keeps per action:
+**Then the tree was pruned** to how the game is actually played, by three rules:
 
-| Buckets | Pre-draw | Post-draw | Both |
-| --- | --- | --- | --- |
-| 200 | 166 MB | 2.3 GB | 2.4 GB |
-| 1,000 | 830 MB | 11.4 GB | 12.2 GB |
-| 1,500 | 1.2 GB | 17.1 GB | 18.3 GB |
-| 6,175 | 5.0 GB | 70.3 GB | 75.3 GB |
-| 16,757 | 13.6 GB | 190.7 GB | **204.2 GB** |
+- **No limping.** An unopened pot is raised or folded. Limping is the branchiest
+  action in the game — it keeps every player in and hands the next seat the same
+  decision over again.
+- **At most two callers of the open**, which bounds how multiway a pot can get,
+  and multiway is what the post-draw street costs the most on.
+- **No cold calls of a 3-bet.** The only 3-bet is a shove, so a player with no
+  money in voluntarily may 4-bet jam or fold. The opener — and anyone who already
+  called the open — is not cold, and may still call.
 
-**Solving both streets at once does not fit, and no amount of bucketing rescues
-it.** At 200 buckets it still wants 2.4 GB, and 200 buckets is far too coarse to
-tell a pat 8 from a one-card draw to a 7.
+|  | Unpruned | Pruned |
+| --- | --- | --- |
+| Nodes | 1,208,412 | **6,392** |
+| Pre-draw decisions | 49,796 | **679** |
+| Post-draw decisions | 709,839 | **2,562** |
+| Both streets, 16,757 classes | 204.2 GB | **0.9 GB** |
+| Build time | 4.2 s | 22 ms |
 
-Two findings got the tree even this small, and both were measured rather than
-foreseen:
+A 227-fold reduction in what a solve has to hold, and the 0.9 GB is at the
+*finest* grouping the hand space supports — no detail ceilings at all.
 
-- **Re-raising is what explodes a tree, not bet sizes.** Letting b25 and b100
-  raise each other multiway took the tree from 907,667 nodes past five million
-  and then out of memory. Restricting the raise over a bet to all-in is what
-  makes seven-handed buildable at all.
-- **Over half the draw nodes have no betting after them.** The median post-draw
-  subgame has *zero* decision nodes, because with all-in as the only 3-bet and
-  equal stacks, most contested pots are already all-in before the draw.
+## The streets no longer have to be solved apart
 
-## The architecture that follows: solve the streets apart
+Splitting the solve — pre-draw over the whole tree with a rollout standing in
+for everything after the draw, post-draw subgames solved singly on demand — was
+the only thing that fit in 204 GB. It is not needed at 0.9 GB.
 
-The same table shows the way out. Post-draw subgames are individually tiny —
-**23,615 of them, averaging 30 decision nodes, the largest 14,280**, which is
-65 MB at 200 buckets. Holding all of them at once is what is impossible, not
-solving any one of them.
+That matters for more than memory. A split solve pays for itself twice: the
+rollout policy biases the pre-draw strategy, and the subgames are then solved
+against a pre-draw range that was shaped by that bias. Solving both streets
+together removes the bootstrap and with it the bias, and it is what was asked
+for in the first place.
 
-So the solve splits in two:
-
-1. **The pre-draw solve** is the main run: the full seven-handed tree down to the
-   draw, at roughly 1,000–1,500 buckets, with everything past the draw resolved
-   by rollout under a fixed post-draw policy. That is 830 MB to 1.2 GB — it fits
-   on a desktop.
-2. **Post-draw subgames are solved on demand**, one line at a time, when there is
-   a question about one. Each is seconds of work, at a bucketing far finer than
-   the pre-draw solve could afford.
-
-This is the answer ICM DB arrived at for a different reason: solving what
-somebody has a question about beats precomputing an exhaustive grid. Here it is
-not a preference but the only thing that fits. The post-draw street is still
-solved, with b25, b100 and bAI exactly as specified — in its own run rather than
-jointly, which is also what lets it be solved *better* than a joint solve could
-have afforded.
+The rollout in `lib/rollout.js` still earns its place as the terminator for a
+pre-draw-only run, which is what the solver does today. Making the draw a
+decision rather than a policy, and running CFR through the post-draw street, is
+the next piece of work.
 
 ## The draw: pat, one, or two
 
@@ -144,8 +138,9 @@ most are dominated outright. Three options are offered:
 - **Stand pat.** Always available to every hand, which is what makes snowing
   fall out of the solve rather than needing to be hand-coded — if standing pat
   with a broken hand shows a profit, CFR will find it.
-- **Draw one**, keeping the four lowest distinct ranks.
-- **Draw two**, keeping the three lowest distinct ranks.
+- **Draw one**, keeping the best four ranks.
+- **Draw two**, keeping the best three. Which four, and which three, is measured
+  rather than assumed — see below.
 
 **Drawing three or more is not offered.** Players stand pat or take one, and
 take two only from the big blind or as a late-position opener in a single-raised
@@ -252,29 +247,35 @@ are the same run.
 
 ## Where the solver actually is
 
-`npm run solve` runs it. Seven-handed at 40bb it holds **2.4 GB** and turns
-**~21,000 iterations a second**; three-handed, ~72,000.
+`npm run solve` runs it. Seven-handed at 40bb, twenty million iterations take
+about seven minutes at ~45,000 a second and hold **30 MB**.
 
-Three-handed converges usefully in about five million iterations — fold
-frequencies come out monotone down the strength ladder, and the pure trash folds
-90–99%. **Seven-handed does not converge in anything like that.** The opening
-seats are only reached when everyone before them folds, so at a million
-iterations most buckets at those nodes have never been visited and still show
-the uniform strategy they started with. The arithmetic is unforgiving: 49,796
-pre-draw decisions times 3,463 buckets is 172 million information sets, and
-reaching each of them a useful number of times is a run measured in hours, not
-minutes.
+Opening ranges come out monotone in hand strength and read like poker: from the
+small blind the nuts never folds, a pat nine folds 3%, a pat ten 18%, and
+K-Q-J-9 — which is a pat king with no draw under it — folds 96%.
 
-CFR+ and linear averaging are what made three-handed work at all — before them
-the same run produced strategies that were not monotone in hand strength and had
-the worst hand in the ladder limping 81%.
+Before the pruning this did not work at all. The unpruned tree had 49,796
+pre-draw decisions against 3,463 buckets, or 172 million information sets, and
+the opening seats are reached only when everyone before them folds; a million
+iterations left most of their buckets never visited and still showing the
+uniform strategy they started with. Pruning cut the pre-draw decisions to 679,
+which is what made seven-handed converge in minutes instead of hours.
+
+Two standard improvements did the rest, and neither is tuning: **CFR+ regret
+flooring**, so an action that looked bad early stops dragging a debt behind it,
+and **linear averaging**, so later iterations count for more. Before them the
+same run gave strategies that were not monotone in hand strength, with the worst
+hand in the ladder limping 81%.
 
 ## What is next
 
-1. Checkpointing, so a long run survives being stopped. This is what makes
-   seven-handed practical at all.
-2. `lib/subgame.js` — solving one post-draw subgame on demand.
-3. `serve.js` and `public/` — entering a configuration and browsing the result.
+1. **Solve both streets together**, now that they fit. The draw becomes a
+   decision rather than a fixed policy, and CFR runs through the post-draw
+   betting instead of a rollout standing in for it. This is the piece that makes
+   the b25 / b100 / bAI sizes real rather than modelled.
+2. `serve.js` and `public/` — entering a configuration and browsing the result.
+3. Checkpointing, which is no longer urgent at seven minutes a run but will be
+   once the post-draw street is in the same solve.
 
 ## The open risks, honestly
 
@@ -286,11 +287,17 @@ the worst hand in the ladder limping 81%.
   under a fixed post-draw policy means the pre-draw strategy is only as good as
   that policy. The fix is to iterate — solve subgames, feed their values back as
   the rollout, re-run — and whether that converges usefully is untested.
-- **2.80 GB is a lot to ask of a desktop.** The pre-draw solve needs Node run
-  with a raised heap, and the ceilings are the dial if it will not fit. What has
-  not been tried is varying detail by depth: the opening decision wants every
-  bucket, while a player facing an all-in four seats later is choosing between
-  folding and calling and needs far fewer.
+- **The pruned game is a narrower game than the one being played.** No limping,
+  at most two callers, no cold-calling a 3-bet: each is defensible and each
+  removes lines that occur at a real table. This is the largest single
+  assumption in the project, and it is the one that bought everything else.
+- **The keep is chosen by a heads-up-ish yardstick.** `bestKeep` scores a draw by
+  how often it beats a ladder of benchmark lows, which says nothing about how
+  many players it has to beat. Multiway, nut potential is worth more than the
+  ladder credits — 7-5-4-3 makes the nuts with a deuce where 8-5-4-3 can never
+  do better than an eight. The seven-handed solve does appear to value 7-5-4-3
+  above 8-5-4-3 despite the ladder scoring them the other way round, which is
+  either that effect showing up or noise, and is worth telling apart.
 - **No-draw-three is a real restriction, not just an abstraction.** Hands that
   would take three in a live game fold here. That was a deliberate call, and it
   is the one place the solve answers a slightly different game than the one
