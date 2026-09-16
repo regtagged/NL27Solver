@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "measure": "node scripts/measure-classes.mjs"
+    "measure": "node scripts/measure-classes.mjs",
+    "measure:tree": "node --max-old-space-size=6000 scripts/measure-tree.mjs"
   },
   "engines": {
     "node": ">=18"
