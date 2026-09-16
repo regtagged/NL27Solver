@@ -216,6 +216,46 @@ the honest count at a defensible ceiling is 3,452, and the pre-draw solve needs
 2.80 GB rather than 830 MB. It still fits, with room to tighten to 2.07 GB by
 dropping one-card detail from a ten to a nine.
 
+## The hand viewer
+
+ ranks every starting hand by equity and Unknown command: "start"
+
+
+Did you mean one of these?
+  npm star # Mark your favorite packages
+  npm stars # View packages marked as favorites
+  npm start # Start a package
+To see a list of supported npm commands, run:
+  npm help serves it.
+A hand here is a set of five ranks with flushes split out - 7-5-4-3-2 is one row
+of 1,020 combinations and the same ranks in one suit is a different row of 4,
+because in this game that is a different hand. Suits carry no other information,
+so nothing else is split, and the 7,462 rows account for all 2,598,960 hands in
+the deck exactly once.
+
+Equity is measured rather than modelled: opponents are dealt out of the same
+deck, everything draws under the policy in , and showdowns are
+counted. It has to be Monte Carlo - a heads-up pot is one hand against C(47,5)
+opponents, each of which then draws - so the numbers carry sampling error, and
+two invariants say how much:
+
+| | Measured | Must be |
+| --- | --- | --- |
+| Average equity, whole deck, heads-up | 50.23% | 50% |
+| Average equity, whole deck, three-way | 33.42% | 33.3% |
+
+Both players draw under the same policy from the same deck, so a hand picked at
+random is a coin flip against another one. If the draw policy, the card removal,
+the showdown or the tie handling were wrong, neither number would land. They are
+the cheapest test in the project and the one most likely to catch a real bug.
+
+**Ranking needs common random numbers.** Sorting depends on the *differences*
+between equities, and giving each hand its own seed makes each difference the
+sum of two independent errors - enough to put 7-6-5-3-2 below 7-6-5-4-2, which
+is simply wrong. Every hand now faces the same sequence of shuffles, and where
+sampling still cannot separate two hands the exact 2-7 ranking breaks the tie,
+because that is free and it is not an estimate.
+
 ## The algorithm
 
 **Monte Carlo CFR, external sampling.** Each iteration shuffles one deck, deals

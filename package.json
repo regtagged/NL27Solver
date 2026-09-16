@@ -9,7 +9,9 @@
     "measure": "node scripts/measure-classes.mjs",
     "measure:tree": "node --max-old-space-size=6000 scripts/measure-tree.mjs",
     "measure:buckets": "node --max-old-space-size=6000 scripts/measure-buckets.mjs",
-    "solve": "node --max-old-space-size=10000 scripts/solve.mjs"
+    "solve": "node --max-old-space-size=10000 scripts/solve.mjs",
+    "start": "node serve.js",
+    "rank": "node --max-old-space-size=6000 scripts/rank-hands.mjs"
   },
   "engines": {
     "node": ">=18"
