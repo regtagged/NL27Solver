@@ -218,15 +218,7 @@ dropping one-card detail from a ten to a nine.
 
 ## The hand viewer
 
- ranks every starting hand by equity and Unknown command: "start"
-
-
-Did you mean one of these?
-  npm star # Mark your favorite packages
-  npm stars # View packages marked as favorites
-  npm start # Start a package
-To see a list of supported npm commands, run:
-  npm help serves it.
+`npm run rank` ranks every starting hand by equity and `npm start` serves it.
 A hand here is a set of five ranks with flushes split out - 7-5-4-3-2 is one row
 of 1,020 combinations and the same ranks in one suit is a different row of 4,
 because in this game that is a different hand. Suits carry no other information,
@@ -234,7 +226,7 @@ so nothing else is split, and the 7,462 rows account for all 2,598,960 hands in
 the deck exactly once.
 
 Equity is measured rather than modelled: opponents are dealt out of the same
-deck, everything draws under the policy in , and showdowns are
+deck, everything draws under the policy in `lib/draws.js`, and showdowns are
 counted. It has to be Monte Carlo - a heads-up pot is one hand against C(47,5)
 opponents, each of which then draws - so the numbers carry sampling error, and
 two invariants say how much:
