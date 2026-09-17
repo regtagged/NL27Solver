@@ -10,17 +10,24 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { extname, join, normalize, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { Solver } from './lib/solve.js';
+import { indexNodes, strategyTree, foldRoundTo } from './lib/browse.js';
+import { positionNames } from './lib/tree.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
 const dataFile = resolve(here, 'data', 'ranked.json');
 
 const argv = process.argv.slice(2);
-const at = argv.indexOf('--port');
-const port = Number(at >= 0 ? argv[at + 1] : process.env.PORT ?? 43195);
+const flag = (name, fallback) => {
+  const at = argv.indexOf(`--${name}`);
+  return at >= 0 && at + 1 < argv.length ? argv[at + 1] : fallback;
+};
+const port = Number(flag('port', process.env.PORT ?? 43195));
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -36,8 +43,78 @@ if (!existsSync(dataFile)) {
   process.exit(1);
 }
 
+/**
+ * The solve the browser walks, run here rather than shipped.
+ *
+ * Holding the solver in the server is what lets a node be asked for by id and
+ * answered with a grouped range: the alternative is writing every node's whole
+ * range to disk, which is the same numbers spelled out 679 times.
+ */
+let solve = null;
+if (argv.includes('--solve')) {
+  const iterations = Number(flag('iterations', 2000000));
+  const players = Number(flag('players', 7));
+  process.stdout.write(`Solving ${players}-handed, ${iterations.toLocaleString()} iterations…\n`);
+  const started = Date.now();
+  const solver = new Solver({ config: { players, nodeLimit: 2e7 } });
+  solver.run(iterations);
+  const rows = JSON.parse(readFileSync(dataFile)).rows;
+  solve = {
+    solver,
+    rows,
+    players,
+    names: positionNames(players),
+    nodes: indexNodes(solver.tree, players),
+    iterations,
+  };
+  console.log(`  ${solve.nodes.size} pre-draw decisions, `
+    + `${((Date.now() - started) / 1000).toFixed(0)}s`);
+}
+
+const json = (response, body) => {
+  response.writeHead(200, { 'content-type': TYPES['.json'], 'cache-control': 'no-cache' });
+  response.end(JSON.stringify(body));
+};
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+
+  if (url.pathname === '/api/solve') {
+    if (!solve) return json(response, { running: false });
+    return json(response, {
+      running: true,
+      players: solve.players,
+      names: solve.names,
+      iterations: solve.iterations,
+      root: solve.solver.tree.root,
+      nodes: [...solve.nodes.values()],
+    });
+  }
+
+  if (url.pathname === '/api/strategy') {
+    if (!solve) return json(response, { running: false });
+    const id = Number(url.searchParams.get('node'));
+    const answer = strategyTree(solve.solver, id, solve.rows);
+    if (!answer) {
+      response.writeHead(404, { 'content-type': 'text/plain' }).end('No such decision');
+      return;
+    }
+    const entry = solve.nodes.get(id);
+    return json(response, {
+      running: true,
+      id,
+      seat: answer.seat,
+      seatName: solve.names[answer.seat],
+      sequence: entry?.sequence ?? [],
+      actions: answer.actions.map((label, i) => ({
+        label,
+        child: entry?.actions[i]?.child ?? -1,
+      })),
+      // Where a seat's own decision lives from here, if everyone between folds.
+      jumps: solve.names.map((_, seat) => foldRoundTo(solve.solver.tree, id, seat)),
+      tree: answer.tree,
+    });
+  }
 
   if (url.pathname === '/api/ranked') {
     const body = await readFile(dataFile);

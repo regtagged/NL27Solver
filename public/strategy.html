@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-draw strategy — 2-7 Lowball (Single Draw)</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --line: rgba(16, 16, 20, 0.12);
+    --ink: #16161a;
+    --ink-2: #4a4a52;
+    --ink-3: #82828c;
+    --chip: rgba(16, 16, 20, 0.06);
+    --accent: #1565c0;
+    --fold: #9aa0a8;
+    --call: #40ac68;
+    --raise: #e0a33a;
+    --allin: #c9433b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --bg: #141416; --panel: #1c1c1f; --line: rgba(255,255,255,.12);
+      --ink: #eeeef2; --ink-2: #b6b6be; --ink-3: #85858e; --chip: rgba(255,255,255,.08);
+      --fold: #6c727a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 18px 24px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  .eyebrow { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { margin: 2px 0 0; font-size: 20px; text-transform: uppercase; letter-spacing: .01em; }
+  header a { margin-left: auto; color: var(--accent); font-size: 13px; }
+
+  main { padding: 18px 24px 48px; max-width: 1180px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .panel > h2 {
+    margin: 0; padding: 11px 14px; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The seat strip is the navigation: every action is a link to where it goes. */
+  .seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; padding: 12px; }
+  .seat { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--bg); }
+  .seat.is-acting { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .who { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .pos { font-weight: 700; font-size: 13px; }
+  .bb { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .lines { display: flex; flex-direction: column; gap: 3px; }
+  .lines button, .lines span {
+    display: block; width: 100%; text-align: left; font: inherit; font-size: 12px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: 7px; padding: 3px 7px; cursor: pointer;
+  }
+  .lines button:hover { border-color: var(--accent); color: var(--ink); }
+  .lines span { cursor: default; opacity: .75; }
+  .lines .taken { border-style: dashed; font-weight: 600; color: var(--ink); }
+  .lines .ahead { border-style: dotted; }
+
+  .line-note { padding: 0 14px 12px; font-size: 12px; color: var(--ink-3); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; text-align: right; }
+  th:first-child { text-align: left; }
+  td.name { font-variant-numeric: tabular-nums; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  tr.category > td.name { font-weight: 700; }
+  tr.hand > td.name { color: var(--ink-2); }
+  tbody tr:hover { background: var(--chip); }
+
+  .twist { display: inline-block; width: 14px; color: var(--ink-3); }
+  .name button {
+    font: inherit; border: 0; background: none; color: inherit; cursor: pointer;
+    padding: 0; text-align: left;
+  }
+  .name button:hover { color: var(--accent); }
+
+  .bar { display: flex; height: 16px; border-radius: 4px; overflow: hidden; background: var(--chip); min-width: 160px; }
+  .bar i { display: block; }
+  .mix { display: flex; gap: 8px; justify-content: flex-end; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .mix span { min-width: 42px; text-align: right; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .legend { display: flex; gap: 16px; padding: 10px 14px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+  .loading { padding: 40px; text-align: center; color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="eyebrow">Pre-draw strategy</div>
+    <h1 id="title">2-7 Lowball (Single Draw)</h1>
+  </div>
+  <div class="eyebrow" id="meta"></div>
+  <a href="/">Ranked hands →</a>
+</header>
+
+<main>
+  <section class="panel" style="margin-bottom:18px">
+    <h2>The table</h2>
+    <div class="seats" id="seats"></div>
+    <p class="line-note" id="line"></p>
+  </section>
+
+  <section class="panel">
+    <h2 id="rangeTitle">Range</h2>
+    <div class="legend" id="legend"></div>
+    <div id="range"><div class="loading">Loading…</div></div>
+  </section>
+</main>
+
+<script type="module">
+const state = { node: 0, open: new Set(['Pat']), data: null, index: null };
+const $ = (id) => document.getElementById(id);
+
+const COLOURS = { fold: 'var(--fold)', call: 'var(--call)', 'all-in': 'var(--allin)' };
+const colourFor = (label) => COLOURS[label] ?? (label.startsWith('raise') ? 'var(--raise)' : 'var(--accent)');
+
+async function load(node) {
+  state.node = node;
+  const answer = await fetch(`/api/strategy?node=${node}`).then((r) => r.json());
+  if (!answer.running) {
+    $('range').innerHTML = '<div class="loading">Start the server with <code>--solve</code> to browse strategies.</div>';
+    return;
+  }
+  state.data = answer;
+  render();
+}
+
+/**
+ * The seat strip, which doubles as the navigation.
+ *
+ * A seat that has acted shows what it did and goes back to where it did it. The
+ * seat to act shows its actions. A seat not yet in the hand shows its own
+ * actions from where the line would reach it if everyone between folded, which
+ * is how people ask the question - "and what does the button do".
+ */
+function renderSeats() {
+  const d = state.data;
+  const taken = new Map(d.sequence.map((entry) => [entry.seat, entry]));
+  const order = d.jumps.map((_, seat) => seat);
+
+  $('seats').innerHTML = order.map((seat) => {
+    const acting = seat === d.seat;
+    const did = taken.get(seat);
+    let lines;
+    if (acting) {
+      lines = d.actions.map((action) => action.child >= 0
+        ? `<button data-node="${action.child}" style="border-left:3px solid ${colourFor(action.label)}">${action.label}</button>`
+        : `<span>${action.label}</span>`);
+    } else if (did) {
+      lines = [`<button class="taken" data-node="${did.at}">${did.label}</button>`];
+    } else if (d.jumps[seat] >= 0) {
+      lines = [`<button class="ahead" data-node="${d.jumps[seat]}">to act →</button>`];
+    } else {
+      lines = ['<span>—</span>'];
+    }
+    return `<div class="seat${acting ? ' is-acting' : ''}">`
+      + `<div class="who"><span class="pos">${d.seatNames?.[seat] ?? seatName(seat)}</span></div>`
+      + `<div class="lines">${lines.join('')}</div></div>`;
+  }).join('');
+
+  for (const button of $('seats').querySelectorAll('button[data-node]')) {
+    button.onclick = () => load(Number(button.dataset.node));
+  }
+
+  $('line').textContent = d.sequence.length
+    ? d.sequence.map((entry) => `${entry.name} ${entry.label}`).join(' · ')
+    : 'First in.';
+  $('rangeTitle').textContent = `${d.seatName} range`;
+}
+
+let names = [];
+const seatName = (seat) => names[seat] ?? `S${seat}`;
+
+function renderLegend() {
+  $('legend').innerHTML = state.data.actions.map((action) =>
+    `<span><i class="swatch" style="background:${colourFor(action.label)}"></i>${action.label}</span>`).join('');
+}
+
+function rowsOf(tree, depth = 0, prefix = '') {
+  const out = [];
+  for (const node of tree) {
+    const id = prefix ? `${prefix}/${node.label}` : node.label;
+    out.push({ id, depth, node });
+    if (node.children.length && state.open.has(id)) out.push(...rowsOf(node.children, depth + 1, id));
+  }
+  return out;
+}
+
+function renderRange() {
+  const d = state.data;
+  const rows = rowsOf(d.tree);
+  const head = '<tr><th>Hand</th><th>Combos</th><th>Mix</th>'
+    + d.actions.map((a) => `<th>${a.label}</th>`).join('') + '</tr>';
+
+  const body = rows.map(({ id, depth, node }) => {
+    const twist = node.children.length ? (state.open.has(id) ? '▾' : '▸') : '';
+    const name = node.children.length
+      ? `<button data-row="${id}"><span class="twist">${twist}</span>${node.label}</button>`
+      : `<span class="twist"></span>${node.label}`;
+    const bar = d.actions.map((a, i) =>
+      `<i style="width:${(node.mix[i] * 100).toFixed(2)}%;background:${colourFor(a.label)}"></i>`).join('');
+    const cells = node.mix.map((v) => `<td class="num">${(v * 100).toFixed(0)}%</td>`).join('');
+    return `<tr class="${node.kind}">`
+      + `<td class="name" style="padding-left:${10 + depth * 18}px">${name}</td>`
+      + `<td class="num">${node.combos.toLocaleString()}</td>`
+      + `<td><span class="bar">${bar}</span></td>${cells}</tr>`;
+  }).join('');
+
+  $('range').innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  for (const button of $('range').querySelectorAll('button[data-row]')) {
+    button.onclick = () => {
+      const id = button.dataset.row;
+      if (state.open.has(id)) state.open.delete(id);
+      else state.open.add(id);
+      renderRange();
+    };
+  }
+}
+
+function render() {
+  renderSeats();
+  renderLegend();
+  renderRange();
+}
+
+const solve = await fetch('/api/solve').then((r) => r.json());
+if (!solve.running) {
+  $('range').innerHTML = '<div class="loading">This server has no solve loaded.<br>'
+    + 'Restart it with <code>--solve</code>.</div>';
+} else {
+  names = solve.names;
+  $('meta').textContent = `${solve.players}-handed · ${solve.iterations.toLocaleString()} iterations`;
+  await load(solve.root);
+}
+</script>
+</body>
+</html>

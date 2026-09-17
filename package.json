@@ -11,7 +11,8 @@
     "measure:buckets": "node --max-old-space-size=6000 scripts/measure-buckets.mjs",
     "solve": "node --max-old-space-size=10000 scripts/solve.mjs",
     "start": "node serve.js",
-    "rank": "node --max-old-space-size=6000 scripts/rank-hands.mjs"
+    "rank": "node --max-old-space-size=6000 scripts/rank-hands.mjs",
+    "browse": "node --max-old-space-size=8000 serve.js --solve"
   },
   "engines": {
     "node": ">=18"
