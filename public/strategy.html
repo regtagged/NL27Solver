@@ -19,7 +19,9 @@
     --fold: #6c727a;
     --call: #40ac68;
     --raise: #d8a03c;
-    --allin: #c9433b;
+    --threebet: #c9433b;
+    --allin: #9b6bef;
+    --loss: #c9433b;
   }
   * { box-sizing: border-box; }
   body {
@@ -56,7 +58,9 @@
   }
   .lines button:hover { border-color: var(--accent); color: var(--ink); }
   .lines span { cursor: default; opacity: .75; }
-  .lines .taken { border-style: dashed; font-weight: 600; color: var(--ink); }
+  /* What this seat did, beside what it could have done: one is history and the
+     rest are still links, so they must not read as the same thing. */
+  .lines .taken { background: var(--chip); font-weight: 600; color: var(--ink); }
   .lines .ahead { border-style: dotted; }
 
   .line-note { padding: 0 14px 12px; font-size: 12px; color: var(--ink-3); }
@@ -86,6 +90,29 @@
   .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .legend { display: flex; gap: 16px; padding: 10px 14px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
   .loading { padding: 40px; text-align: center; color: var(--ink-3); }
+
+  /*
+   * One structure at a time. Two sizings are two different games - different
+   * trees, different actions - so they are switched between rather than mixed,
+   * and switching keeps your place in the hand wherever the other has that line.
+   */
+  .views { display: flex; gap: 8px; padding: 12px 12px 0; flex-wrap: wrap; }
+  .views button {
+    font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--raised); color: var(--ink-2);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left;
+  }
+  .views .sizing { font-size: 13px; }
+  .views button:hover { border-color: var(--accent); color: var(--ink); }
+  .views button[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--ink); font-weight: 700;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .views .count { color: var(--ink-3); font-weight: 400; }
+
+  /* A seat's box is the way to its own decision, not just the label above it. */
+  .seat[data-node] { cursor: pointer; }
+  .seat[data-node]:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -102,6 +129,7 @@
 <main>
   <section class="panel" style="margin-bottom:18px">
     <h2>The table</h2>
+    <div class="views" id="views"></div>
     <div class="seats" id="seats"></div>
     <p class="line-note" id="line"></p>
   </section>
@@ -114,15 +142,29 @@
 </main>
 
 <script type="module">
-const state = { node: 0, open: new Set(['Pat']), data: null, index: null };
+const state = { node: 0, view: 0, open: new Set(['Pat']), data: null, views: [], note: '' };
 const $ = (id) => document.getElementById(id);
 
-const COLOURS = { fold: 'var(--fold)', call: 'var(--call)', 'all-in': 'var(--allin)' };
-const colourFor = (label) => COLOURS[label] ?? (label.startsWith('raise') ? 'var(--raise)' : 'var(--accent)');
+/*
+ * Colour says what an action is, so it has to come off the kind and not the
+ * label: "raise 2.5x" and "raise 3x" are one thing at two sizes, and a 3-bet
+ * that is not all-in is a different thing from one that is.
+ */
+const COLOURS = {
+  fold: 'var(--fold)',
+  check: 'var(--fold)',
+  call: 'var(--call)',
+  raise: 'var(--raise)',
+  threebet: 'var(--threebet)',
+  allin: 'var(--allin)',
+  bet: 'var(--raise)',
+};
+const colourFor = (action) => COLOURS[action?.kind] ?? 'var(--accent)';
 
-async function load(node) {
+async function load(node, view = state.view) {
   state.node = node;
-  const answer = await fetch(`/api/strategy?node=${node}`).then((r) => r.json());
+  state.view = view;
+  const answer = await fetch(`/api/strategy?node=${node}&view=${view}`).then((r) => r.json());
   if (!answer.running) {
     $('range').innerHTML = '<div class="loading">Start the server with <code>--solve</code> to browse strategies.</div>';
     return;
@@ -132,61 +174,123 @@ async function load(node) {
 }
 
 /**
+ * Switching structure keeps your place in the hand.
+ *
+ * The two trees have different nodes, so the server is asked for the same line
+ * rather than the same id. A line the other structure does not have - anything
+ * under a sized 3-bet, when the other only has the jam - lands at the top and
+ * says so.
+ */
+async function switchTo(view) {
+  if (view === state.view) return;
+  const answer = await fetch(`/api/same?from=${state.view}&to=${view}&node=${state.node}`)
+    .then((r) => r.json());
+  state.note = answer.exact ? '' : 'That line does not exist under this structure.';
+  await load(answer.node, view);
+}
+
+/** The game in the header: the same one, sized the way this structure sizes it. */
+function renderMeta() {
+  const view = state.views[state.view];
+  const c = view.config;
+  // The dead money is what the ante is really saying, so it is shown as well
+  // as the per-player figure: 0.6bb each is 4.2bb in the middle seven-handed.
+  const posters = c.anteMode === 'button' ? 1 : state.players;
+  const dead = c.ante ? c.ante * posters : 0;
+  const ante = c.ante
+    ? ` &nbsp;·&nbsp; ante ${c.ante}bb ${c.anteMode === 'button' ? 'button' : 'each'}`
+      + ` <strong>(${dead.toFixed(1)}bb dead)</strong>`
+    : ' &nbsp;·&nbsp; no ante';
+  const pot = (dead + c.smallBlind + c.bigBlind).toFixed(1);
+  $('meta').innerHTML = `${state.players}-handed &nbsp;·&nbsp; <strong>${c.stack}bb</strong>`
+    + ` &nbsp;·&nbsp; ${c.smallBlind}/${c.bigBlind}${ante}`
+    + ` &nbsp;·&nbsp; ${pot}bb to win`
+    + ` &nbsp;·&nbsp; ${view.iterations.toLocaleString()} iterations`;
+}
+
+function renderViews() {
+  if (state.views.length < 2) {
+    $('views').hidden = true;
+    return;
+  }
+  // The sizing names the structure, but the game under it - seats and dead
+  // money - is what makes two sizings worth comparing at all, so it is on the
+  // button rather than only in the header.
+  $('views').innerHTML = state.views.map((view) =>
+    `<button data-view="${view.index}" aria-pressed="${view.index === state.view}">`
+    + `<span class="sizing">${view.label}</span>`
+    + `<span class="count">${view.game} · ${(view.iterations / 1e6).toFixed(0)}M</span></button>`).join('');
+  for (const button of $('views').querySelectorAll('button[data-view]')) {
+    button.onclick = () => switchTo(Number(button.dataset.view));
+  }
+}
+
+/**
  * The seat strip, which doubles as the navigation.
  *
- * A seat that has acted shows what it did and goes back to where it did it. The
- * seat to act shows its actions. A seat not yet in the hand shows its own
- * actions from where the line would reach it if everyone between folded, which
- * is how people ask the question - "and what does the button do".
+ * Every seat shows the whole of its own decision, not just its part in this
+ * line: the action it took is marked and the ones it passed up are still links,
+ * so a hand can be walked back and sent down the other road. A seat not yet in
+ * the hand has no decision here yet, so it shows the one it would face if
+ * everyone between folded, which is how people ask about it anyway.
+ *
+ * The box around them goes back to the decision itself, where that seat's range
+ * is - which is the question after "what else could it have done".
  */
 function renderSeats() {
   const d = state.data;
-  const taken = new Map(d.sequence.map((entry) => [entry.seat, entry]));
   // Action order, not seat order: UTG first and the blinds last, which is how
   // the decisions actually come round.
   const order = state.order ?? d.jumps.map((_, seat) => seat);
 
   $('seats').innerHTML = order.map((seat) => {
     const acting = seat === d.seat;
-    const did = taken.get(seat);
     const jump = d.jumps[seat];
     let lines;
     if (acting) {
       lines = d.actions.map((action) => action.child >= 0
-        ? `<button data-node="${action.child}" style="border-left:3px solid ${colourFor(action.label)}">${action.label}</button>`
+        ? `<button data-node="${action.child}" style="border-left:3px solid ${colourFor(action)}">${action.label}</button>`
         : `<span>${action.label}</span>`);
-    } else if (did) {
-      lines = [`<button class="taken" data-node="${did.at}">${did.label}</button>`];
     } else if (jump && jump.node >= 0) {
-      // Its own actions, from where the line would reach it if everyone
-      // between folded - so a whole seat is one click away, not two.
-      lines = jump.actions.map((action) => action.child >= 0
-        ? `<button class="ahead" data-node="${action.child}"`
-          + ` style="border-left:3px solid ${colourFor(action.label)}">${action.label}</button>`
+      lines = jump.actions.map((action, i) => action.child >= 0
+        ? `<button class="${i === jump.took ? 'taken' : 'ahead'}" data-node="${action.child}"`
+          + ` style="border-left:3px solid ${colourFor(action)}">${action.label}</button>`
         : `<span>${action.label}</span>`);
     } else {
       lines = ['<span>—</span>'];
     }
 
-    // The seat's name goes to the seat's own decision, for looking at its range
-    // rather than at what follows one of its actions.
-    const name = (jump && jump.node >= 0 && !acting)
-      ? `<button class="pos" data-node="${jump.node}" title="This seat's range here">${seatName(seat)}</button>`
-      : `<span class="pos">${seatName(seat)}</span>`;
-
-    return `<div class="seat${acting ? ' is-acting' : ''}">`
-      + `<div class="who">${name}`
+    // The whole box is the way to that seat's own decision - the question is
+    // "what does the button do here", and the answer should be one click on the
+    // button's box, not on a particular word inside it.
+    const to = acting ? -1 : (jump?.node ?? -1);
+    const title = jump?.took >= 0
+      ? `Back to ${seatName(seat)}'s decision`
+      : `${seatName(seat)}'s decision, folded round`;
+    return `<div class="seat${acting ? ' is-acting' : ''}"`
+      + `${to >= 0 ? ` data-node="${to}" title="${title}"` : ''}>`
+      + `<div class="who"><span class="pos">${seatName(seat)}</span>`
       + `<span class="bb">${state.stacks?.[seat] ?? ''}bb</span></div>`
       + `<div class="lines">${lines.join('')}</div></div>`;
   }).join('');
 
   for (const button of $('seats').querySelectorAll('button[data-node]')) {
-    button.onclick = () => load(Number(button.dataset.node));
+    button.onclick = (event) => {
+      // The buttons inside a box lead somewhere of their own, so a click on one
+      // is not also a click on the box around it.
+      event.stopPropagation();
+      load(Number(button.dataset.node));
+    };
+  }
+  for (const box of $('seats').querySelectorAll('.seat[data-node]')) {
+    box.onclick = () => load(Number(box.dataset.node));
   }
 
-  $('line').textContent = d.sequence.length
+  const line = d.sequence.length
     ? d.sequence.map((entry) => `${entry.name} ${entry.label}`).join(' · ')
     : 'First in.';
+  $('line').textContent = state.note ? `${line} — ${state.note}` : line;
+  state.note = '';
   $('rangeTitle').textContent = `${d.seatName} range`;
 }
 
@@ -195,7 +299,7 @@ const seatName = (seat) => names[seat] ?? `S${seat}`;
 
 function renderLegend() {
   $('legend').innerHTML = state.data.actions.map((action) =>
-    `<span><i class="swatch" style="background:${colourFor(action.label)}"></i>${action.label}</span>`).join('');
+    `<span><i class="swatch" style="background:${colourFor(action)}"></i>${action.label}</span>`).join('');
 }
 
 function rowsOf(tree, depth = 0, prefix = '') {
@@ -227,7 +331,7 @@ function renderRange() {
   const money = (ev) => {
     if (ev === null || ev === undefined) return '<td class="num ev">—</td>';
     const bb = ev / 100;
-    const tone = bb > 0.05 ? 'var(--call)' : bb < -0.05 ? 'var(--allin)' : 'var(--ink-3)';
+    const tone = bb > 0.05 ? 'var(--call)' : bb < -0.05 ? 'var(--loss)' : 'var(--ink-3)';
     return `<td class="num ev" style="color:${tone}">${bb > 0 ? '+' : ''}${bb.toFixed(2)}</td>`;
   };
 
@@ -245,13 +349,16 @@ function renderRange() {
       pricedCombos += node.combos;
     }
   }
-  const wholeBar = d.actions.map((a, i) =>
-    `<i style="width:${(whole[i] / allCombos * 100).toFixed(2)}%;background:${colourFor(a.label)}"></i>`).join('');
+  const barOf = (mix) => `<span class="bar">`
+    + d.actions.map((action, i) => `<i style="width:${(mix[i] * 100).toFixed(2)}%;`
+      + `background:${colourFor(action)}"></i>`).join('') + '</span>';
+
+  const wholeMix = Array.from(whole, (v) => v / allCombos);
   const summary = `<tr class="whole">`
     + `<td class="name"><span class="twist"></span>Every hand</td>`
     + `<td class="num">${allCombos.toLocaleString()}</td>`
-    + `<td><span class="bar">${wholeBar}</span></td>`
-    + Array.from(whole, (v) => `<td class="num">${(v / allCombos * 100).toFixed(0)}%</td>`).join('')
+    + `<td>${barOf(wholeMix)}</td>`
+    + wholeMix.map((v) => `<td class="num">${(v * 100).toFixed(0)}%</td>`).join('')
     + money(pricedCombos ? wholeEv / pricedCombos : null)
     + `</tr>`;
 
@@ -260,13 +367,11 @@ function renderRange() {
     const name = node.children.length
       ? `<button data-row="${id}"><span class="twist">${twist}</span>${node.label}</button>`
       : `<span class="twist"></span>${node.label}`;
-    const bar = d.actions.map((a, i) =>
-      `<i style="width:${(node.mix[i] * 100).toFixed(2)}%;background:${colourFor(a.label)}"></i>`).join('');
     const cells = node.mix.map((v) => `<td class="num">${(v * 100).toFixed(0)}%</td>`).join('');
     return `<tr class="${node.kind}">`
       + `<td class="name" style="padding-left:${10 + depth * 18}px">${name}</td>`
       + `<td class="num">${node.combos.toLocaleString()}</td>`
-      + `<td><span class="bar">${bar}</span></td>${cells}${money(node.ev)}</tr>`;
+      + `<td>${barOf(node.mix)}</td>${cells}${money(node.ev)}</tr>`;
   }).join('');
 
   $('range').innerHTML = `<table><thead>${head}</thead><tbody>${summary}${body}</tbody></table>`;
@@ -281,9 +386,11 @@ function renderRange() {
 }
 
 function render() {
+  renderViews();
   renderSeats();
   renderLegend();
   renderRange();
+  renderMeta();
 }
 
 const solve = await fetch('/api/solve').then((r) => r.json());
@@ -294,21 +401,9 @@ if (!solve.running) {
   names = solve.names;
   state.order = solve.order;
   state.stacks = solve.stacks;
-  const c = solve.config;
-  // The dead money is what the ante is really saying, so it is shown as well
-  // as the per-player figure: 0.6bb each is 4.2bb in the middle seven-handed.
-  const posters = c.anteMode === 'button' ? 1 : solve.players;
-  const dead = c.ante ? c.ante * posters : 0;
-  const ante = c.ante
-    ? ` &nbsp;·&nbsp; ante ${c.ante}bb ${c.anteMode === 'button' ? 'button' : 'each'}`
-      + ` <strong>(${dead.toFixed(1)}bb dead)</strong>`
-    : ' &nbsp;·&nbsp; no ante';
-  const pot = (dead + c.smallBlind + c.bigBlind).toFixed(1);
-  $('meta').innerHTML = `${solve.players}-handed &nbsp;·&nbsp; <strong>${c.stack}bb</strong>`
-    + ` &nbsp;·&nbsp; ${c.smallBlind}/${c.bigBlind}${ante}`
-    + ` &nbsp;·&nbsp; ${pot}bb to win`
-    + ` &nbsp;·&nbsp; ${solve.iterations.toLocaleString()} iterations`;
-  await load(solve.root);
+  state.views = solve.views;
+  state.players = solve.players;
+  await load(solve.views[0].root, 0);
 }
 </script>
 </body>

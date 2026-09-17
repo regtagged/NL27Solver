@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BB, ACTIVE, FOLDED, ALLIN, PRE_DRAW, POST_DRAW, DRAWING, postDrawOrder,
   defaultConfig, positionNames, preDrawOrder, initialState, legalActions,
-  applyAction, buildTree, potOf,
+  applyAction, buildTree, potOf, threeBetFlag,
 } from '../lib/tree.js';
 
 const labels = (state, config) => legalActions(state, config).map((a) => a.label);
@@ -97,6 +97,42 @@ test('a 3-bet shove cannot be cold-called, but the opener may call it', () => {
   assert.deepEqual(labels(state, config), ['fold', 'call']);
 });
 
+const sized = (players) => ({
+  ...defaultConfig(), players, ante: 0.25, openTo: 2.5, threeBetTo: { inPosition: 7, blinds: 9 },
+});
+
+test('with 3-bet sizes set, a 3-bet is 7bb in position and 9bb from the blinds, beside the jam', () => {
+  const config = sized(6);
+  let state = initialState(config);
+  assert.deepEqual(labels(state, config), ['fold', 'raise 2.5x']);
+  state = take(state, config, 'raise 2.5x'); // UTG
+  assert.deepEqual(labels(state, config), ['fold', 'call', '3-bet 7bb', 'all-in'], 'HJ');
+  for (let i = 0; i < 3; i += 1) state = take(state, config, 'fold'); // HJ, CO, BTN
+  assert.deepEqual(labels(state, config), ['fold', 'call', '3-bet 9bb', 'all-in'], 'SB');
+  const threeBet = legalActions(state, config).find((a) => a.kind === 'threebet');
+  assert.equal(state.committed[0] + threeBet.amount, 9 * BB, 'to 9bb, the blind included');
+});
+
+test('a sized 3-bet is called or jammed over by whoever has money in, and only jammed over cold', () => {
+  const config = sized(6);
+  let state = initialState(config);
+  state = take(state, config, 'raise 2.5x'); // UTG
+  state = take(state, config, 'call'); // HJ flats
+  state = take(state, config, '3-bet 7bb'); // CO squeezes, at the same size
+  assert.deepEqual(labels(state, config), ['fold', 'all-in'], 'BTN is cold, and cannot 3-bet it again');
+  for (let i = 0; i < 3; i += 1) state = take(state, config, 'fold'); // BTN, SB, BB
+  assert.deepEqual(labels(state, config), ['fold', 'call', 'all-in'], 'UTG opened, so may call');
+  state = take(state, config, 'call');
+  assert.deepEqual(labels(state, config), ['fold', 'call', 'all-in'], 'HJ flatted, so may call');
+});
+
+test('--three-bet reads the size in position and then from the blinds', () => {
+  assert.deepEqual(threeBetFlag('7,9'), { inPosition: 7, blinds: 9 });
+  assert.deepEqual(threeBetFlag('8'), { inPosition: 8, blinds: 8 });
+  assert.equal(threeBetFlag(undefined), null);
+  assert.throws(() => threeBetFlag('seven'), /big blinds/);
+});
+
 test('an opening shove is not a 3-bet, so calling it is not a cold call', () => {
   const config = { ...defaultConfig(), allowOpenShove: true };
   let state = initialState(config);
@@ -148,19 +184,23 @@ test('facing a bet after the draw, the only raise is all-in', () => {
   assert.deepEqual(facing.actions.map((a) => a.label), ['fold', 'call', 'all-in']);
 });
 
-test('no chips are created or destroyed anywhere in the tree', () => {
-  const config = { ...defaultConfig(), players: 3, nodeLimit: 2e6 };
-  const tree = buildTree(config);
-  const start = config.stack * BB;
-  let checked = 0;
-  for (const node of tree.nodes) {
-    if (node.kind !== 'fold' && node.kind !== 'showdown') continue;
-    let paid = 0;
-    for (let seat = 0; seat < config.players; seat += 1) paid += start - node.state.stack[seat];
-    assert.equal(potOf(node.state), paid, `pot disagrees with stacks at node ${node.id}`);
-    checked += 1;
+test('no chips are created or destroyed anywhere in the tree, with or without 3-bet sizes', () => {
+  for (const config of [
+    { ...defaultConfig(), players: 3, nodeLimit: 2e6 },
+    { ...sized(3), nodeLimit: 2e6 },
+  ]) {
+    const tree = buildTree(config);
+    const start = config.stack * BB;
+    let checked = 0;
+    for (const node of tree.nodes) {
+      if (node.kind !== 'fold' && node.kind !== 'showdown') continue;
+      let paid = 0;
+      for (let seat = 0; seat < config.players; seat += 1) paid += start - node.state.stack[seat];
+      assert.equal(potOf(node.state), paid, `pot disagrees with stacks at node ${node.id}`);
+      checked += 1;
+    }
+    assert.ok(checked > 100, `expected many terminals, saw ${checked}`);
   }
-  assert.ok(checked > 100, `expected many terminals, saw ${checked}`);
 });
 
 test('a fold-out leaves exactly one player who has not folded', () => {
