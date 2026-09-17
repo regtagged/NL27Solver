@@ -219,11 +219,28 @@ dropping one-card detail from a ten to a nine.
 ## The hand viewer
 
 `npm run rank` ranks every starting hand by equity and `npm start` serves it.
-A hand here is a set of five ranks with flushes split out - 7-5-4-3-2 is one row
-of 1,020 combinations and the same ranks in one suit is a different row of 4,
-because in this game that is a different hand. Suits carry no other information,
-so nothing else is split, and the 7,462 rows account for all 2,598,960 hands in
-the deck exactly once.
+
+A row is a set of five ranks **split by whether the cards it keeps are all one
+suit**. That is the only thing suits decide in this game, and *which* cards
+those are depends on what the hand does — so the split moves with the hand:
+
+| Hand | Keeps | Plain | Suited |
+| --- | --- | --- | --- |
+| 75432 | all five, it stands pat | 1,020 | **4** — a flush |
+| K7543 | 7-5-4-3, throwing the king | 1,008 | **16** — four to a suit |
+
+Both add to 1,024, the suit arrangements of five distinct ranks. Splitting on
+"is the hand a flush" would get 75432 right and K7543 wrong; splitting on the
+keep gets both, because for a pat hand the keep *is* all five cards.
+
+It is not a cosmetic distinction. The suited 75432 is a flush, cannot stand pat,
+and falls from **99.9% to 59.8%**. The suited K7543 is drawing one to four of a
+suit and can brick into a flush: **64.1% to 50.6%**. Averaging either pair
+together would hide a fifty-point swing inside one row.
+
+Rows are found by walking the whole deck rather than by reasoning about it, so
+the counts are what the deck actually holds: **7,947 rows over all 2,598,960
+hands, each counted once**.
 
 Equity is measured rather than modelled: opponents are dealt out of the same
 deck, everything draws under the policy in `lib/draws.js`, and showdowns are

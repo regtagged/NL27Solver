@@ -17,9 +17,7 @@
     --good: #12823f;
     --bad: #c62828;
     --chip: rgba(16, 16, 20, 0.06);
-    --card-face: #ffffff;
-    --card-ink: #16161a;
-    --card-edge: rgba(11, 11, 11, 0.22);
+    --tossed: #e2e2de;
     --pat: #16161a;
     --d1: #1565c0;
     --d2: #12823f;
@@ -34,8 +32,7 @@
       --ink-2: #b6b6be;
       --ink-3: #85858e;
       --chip: rgba(255, 255, 255, 0.08);
-      --card-face: #ecebe7;
-      --card-edge: rgba(0, 0, 0, 0.55);
+      --tossed: #34343a;
       --pat: #d8d8de;
       --d1: #6fa8e8;
       --d2: #5fc088;
@@ -111,20 +108,21 @@
   .num { font-variant-numeric: tabular-nums; }
   .equity { font-variant-numeric: tabular-nums; }
 
+  /* Four-colour deck: clubs green, diamonds blue, hearts red, spades black.
+     The suit is the tile, so a hand kept all in one suit reads as one block of
+     colour - which is exactly the thing that makes it a different hand. */
   .hand { display: inline-flex; gap: 3px; }
   .pip {
-    width: 21px; height: 27px; border-radius: 4px;
+    width: 22px; height: 28px; border-radius: 4px;
     display: grid; place-items: center;
-    background: var(--card-face); color: var(--card-ink);
-    border: 1px solid var(--card-edge);
+    background: var(--suit); color: #fff;
     font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums;
   }
-  .pip.tossed { opacity: 0.3; }
-  .suited {
-    margin-left: 6px; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
-    color: var(--bad); border: 1px solid currentColor; border-radius: 4px; padding: 1px 4px;
-    vertical-align: 2px;
-  }
+  .pip[data-s="c"] { --suit: #12823f; }
+  .pip[data-s="d"] { --suit: #1565c0; }
+  .pip[data-s="h"] { --suit: #c62828; }
+  .pip[data-s="s"] { --suit: #16161a; }
+  .pip.tossed { background: var(--tossed); color: var(--ink-3); }
   .draw { font-size: 12px; font-weight: 600; }
   .draw[data-d="0"] { color: var(--pat); }
   .draw[data-d="1"] { color: var(--d1); }
@@ -299,16 +297,15 @@ const pct = (v, d = 1) => `${(v * 100).toFixed(d)}%`;
 
 function equityOf(row) { return state.action === 'hu' ? row.hu : row.three; }
 
-/** Which of a hand's ranks survive the draw, as booleans along the hand. */
-function keptFlags(row) {
-  if (row.draw === 0 || !row.keep) return row.hand.split('').map(() => true);
-  const pool = row.keep.split('');
-  return row.hand.replace(/s$/, '').split('').map((ch) => {
-    const at = pool.indexOf(ch);
-    if (at < 0) return false;
-    pool.splice(at, 1);
-    return true;
-  });
+const SUIT_NAME = { c: 'clubs', d: 'diamonds', h: 'hearts', s: 'spades' };
+
+/** One card as a coloured tile, faded when the draw throws it away. */
+function pip(card, kept, fade) {
+  const rank = card.slice(0, -1);
+  const suit = card.slice(-1);
+  const tossed = fade && !kept;
+  return `<span class="pip${tossed ? ' tossed' : ''}" data-s="${suit}"`
+    + ` title="${rank} of ${SUIT_NAME[suit]}${tossed ? ', discarded' : ''}">${rank}</span>`;
 }
 
 function filtered() {
@@ -358,18 +355,14 @@ function renderTable(rows) {
   </tr>`;
 
   const body = page.map((row) => {
-    const flags = keptFlags(row);
-    const ranks = row.hand.replace(/s$/, '').split('');
-    const pips = ranks.map((ch, i) => {
-      const tossed = state.shown === 'keep' && !flags[i];
-      return `<span class="pip${tossed ? ' tossed' : ''}">${ch}</span>`;
-    }).join('');
+    const fade = state.shown === 'keep';
+    const pips = row.cards.map((card, i) => pip(card, row.kept[i], fade)).join('');
     const eq = equityOf(row);
     const colour = eq >= 0.6 ? 'var(--good)' : eq >= 0.35 ? 'var(--ink-2)' : 'var(--bad)';
-    const label = ['Pat', '1', '2'][row.draw];
+    const label = ['Pat', 'D1', 'D2'][row.draw];
     return `<tr>
       <td class="num">${pct(row.cum, 1)}</td>
-      <td><span class="hand">${pips}</span>${row.flush ? '<span class="suited">flush</span>' : ''}</td>
+      <td><span class="hand">${pips}</span></td>
       <td class="equity" style="color:${colour}">${pct(eq, 1)}</td>
       <td class="num">${row.combos.toLocaleString()}</td>
       <td class="draw" data-d="${row.draw}">${label}</td>
@@ -407,21 +400,53 @@ function renderPager(pages) {
   }
 }
 
+let curveCache = null;
+
+/**
+ * Where each hand sits along the whole deck, strongest first.
+ *
+ * Recomputed when the opponent count changes, because three-way reorders the
+ * ranking - a hand that wins a coin flip heads-up is not necessarily the same
+ * hand three-handed.
+ */
+function positions() {
+  if (curveCache && curveCache.action === state.action) return curveCache.at;
+  const ordered = [...state.data.rows]
+    .sort((a, b) => equityOf(b) - equityOf(a) || a.rank - b.rank);
+  const at = new Map();
+  let running = 0;
+  for (const row of ordered) {
+    running += row.combos;
+    at.set(row, running / state.data.totalCombos);
+  }
+  curveCache = { action: state.action, at, ordered };
+  return at;
+}
+
 function renderChart(rows) {
   const w = 420;
   const h = 250;
   const pad = { l: 42, r: 12, t: 12, b: 28 };
-  if (!rows.length) { $('chart').innerHTML = '<div class="loading">Nothing in range.</div>'; return; }
+  const at = positions();
+  const { ordered } = curveCache;
 
-  const byRank = [...rows].sort((a, b) => a.cum - b.cum);
-  let running = 0;
-  const total = byRank.reduce((s, r) => s + r.combos, 0);
-  const points = byRank.map((row) => {
-    running += row.combos;
-    const x = pad.l + (running / total) * (w - pad.l - pad.r);
-    const y = pad.t + (1 - equityOf(row)) * (h - pad.t - pad.b);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
+  const X = (cum) => pad.l + cum * (w - pad.l - pad.r);
+  const Y = (eq) => pad.t + (1 - eq) * (h - pad.t - pad.b);
+
+  // The curve is always the whole deck; the filter is shown on top of it, so a
+  // selection of two hands still reads against everything else.
+  const points = ordered.map((row) => `${X(at.get(row)).toFixed(1)},${Y(equityOf(row)).toFixed(1)}`);
+
+  let overlay = '';
+  if (rows.length && rows.length <= 300) {
+    overlay = rows.map((row) => `<circle cx="${X(at.get(row)).toFixed(1)}" `
+      + `cy="${Y(equityOf(row)).toFixed(1)}" r="3.5" fill="#e8833a"/>`).join('');
+  } else if (rows.length) {
+    const xs = rows.map((row) => X(at.get(row)));
+    const lo = Math.min(...xs);
+    overlay = `<rect x="${lo.toFixed(1)}" y="${pad.t}" width="${(Math.max(...xs) - lo).toFixed(1)}" `
+      + `height="${h - pad.t - pad.b}" fill="#e8833a" opacity="0.14"/>`;
+  }
 
   const grid = [0, 0.2, 0.4, 0.6, 0.8, 1].map((v) => {
     const y = pad.t + (1 - v) * (h - pad.t - pad.b);
@@ -437,6 +462,7 @@ function renderChart(rows) {
   $('chart').innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block">
     ${grid}${ticks}
     <polyline fill="none" stroke="var(--accent)" stroke-width="2" points="${points.join(' ')}"/>
+    ${overlay}
   </svg>`;
 }
 

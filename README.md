@@ -22,10 +22,15 @@ npm run rank
 npm start
 ```
 
-Every one of the 7,462 starting hands, ranked by equity, with how many
-combinations it stands for, what it draws, and which cards it throws. Filter by
-percentile band, by ranks held, by how many cards are drawn, by what the draw is
-drawing to, and by whether it can brick into a straight.
+Every one of the 7,947 starting hands, ranked by equity, in a four-colour deck,
+with how many combinations it stands for, what it draws, and which cards it
+throws. Filter by percentile band, by ranks held, by how many cards are drawn,
+by what the draw is drawing to, and by whether it can brick into a straight.
+
+A hand is split by **whether the cards it keeps are all one suit** — 75432 keeps
+all five and splits 1,020 plain against 4 flushes; K7543 throws the king and
+splits 1,008 against 16. That is worth 40 points of equity on the first and 14
+on the second, so the two are never one row.
 
 The equity is measured, not modelled: each hand is dealt opponents out of the
 same deck, everything draws under the policy in `lib/draws.js`, and showdowns
