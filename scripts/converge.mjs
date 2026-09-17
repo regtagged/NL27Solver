@@ -42,6 +42,7 @@ const solver = new Solver({
   config,
   seed: 20260916,
   abstraction: argv.includes('--fine') ? 'fine' : 'coarse',
+  algorithm: flag('algorithm', 'cfr+'),
 });
 const table = solver.bucketTable;
 const watched = WATCH.map(([label, text]) => [label, table[handIndex(parseHand(text))]]);

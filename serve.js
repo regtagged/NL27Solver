@@ -64,21 +64,23 @@ if (argv.includes('--solve')) {
     nodeLimit: 2e7,
   };
   const { players } = config;
+  const algorithm = flag('algorithm', 'cfr+');
   process.stdout.write(`Solving ${players}-handed ${config.stack}bb, `
     + `blinds ${config.smallBlind}/${config.bigBlind}`
     + `${config.ante ? `, ante ${config.ante} (${config.anteMode})` : ''}, `
-    + `${iterations.toLocaleString()} iterations…\n`);
+    + `${iterations.toLocaleString()} iterations of ${algorithm}…\n`);
   const started = Date.now();
   const joint = argv.includes('--joint');
-  const solver = new Solver({ config, abstraction: 'coarse', joint });
+  const solver = new Solver({ config, abstraction: 'coarse', joint, algorithm });
 
   // A solve is minutes of work and the answer never changes, so it is read back
   // rather than paid for again. `--fresh` forces one, for when the question is
   // whether the solver has changed rather than what it says.
-  const file = resolve(here, 'solves', solveKey(config, joint, iterations));
+  const key = solveKey(config, joint, iterations, algorithm);
+  const file = resolve(here, 'solves', key);
   const loaded = argv.includes('--fresh') ? false : load(solver, file);
   if (loaded) {
-    console.log(`  loaded ${solveKey(config, joint, iterations)}`
+    console.log(`  loaded ${key}`
       + ` (solved ${new Date(loaded.built).toLocaleString()})`);
   } else {
     solver.run(iterations);

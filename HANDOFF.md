@@ -17,7 +17,8 @@ is. This file is the honest state of play.
 | `lib/coarse.js` | The abstraction the **solver** runs on — a few hundred |
 | `lib/tree.js` | The betting tree, pre-draw through showdown |
 | `lib/rollout.js` | Fixed policy for a pre-draw-only solve |
-| `lib/solve.js` | Monte Carlo CFR — external sampling, CFR+, linear averaging |
+| `lib/solve.js` | Monte Carlo CFR — external sampling, CFR+ or Discounted CFR |
+| `lib/exploitability.js` | Best response per seat, and NashConv — how much a solve gives away |
 | `lib/checkpoint.js` | Storing a solve so it is not paid for twice |
 | `lib/browse.js` | Walking the tree, and grouping a node's range |
 | `lib/equity.js` | Monte Carlo equity for the hand table |
@@ -47,9 +48,12 @@ asks the solver's table which bucket it is in.
    dead: mine gives 18 / 22 / 27 / 39 for LJ / HJ / CO / BTN against a high
    stakes player's 25 / 32 / 39 / 50. The shape is right and the level is not.
    The joint solve did *not* close it, which killed the obvious explanation.
-   Remaining candidates, in order: the benchmark is a proxy from other games and
-   may be loose; the single 3x sizing gives no small 3-bet, so opening invites
-   only call-or-jam; the tree has one raise size where a real game has several.
+   Convergence did not close it either: a 10M-iteration Discounted CFR solve,
+   measured at NashConv 22.0 bb/100 against 144.5 for a 3M CFR+ one, opens
+   19 / 21 / 27 / 38 (SB 71%). Remaining candidates, in order: the benchmark is
+   a proxy from other games and may be loose; the single 3x sizing gives no
+   small 3-bet, so opening invites only call-or-jam; the tree has one raise size
+   where a real game has several.
 2. **Snowing is not demonstrated.** The joint solve makes it *possible* — the
    draw is a decision and the post-draw street is solved, which a rollout could
    never express. But the hands tested were the wrong ones: 2-2-5-5-8 and
@@ -58,6 +62,12 @@ asks the solver's table which bucket it is in.
    and so can only fold or snow. **This has not been measured.** `scripts/rfi.mjs`
    now prints visit counts beside each line, which is what tells a learned
    strategy from an information set still sitting on its uniform start.
+   Until September 17 its strategy columns printed `NaN` whatever the solve
+   said - `Float64Array.map` coerced the formatted strings back to numbers - so
+   no earlier reading of that table was a reading. Reading it now needs care:
+   the solver strategy is per coarse bucket, 2-2-5-5-8 and 3-3-3-2-8 are the
+   same bucket (`D2 85`), and 8-8-3-3-3 sits in `D3 38` with 7,568 hands that can
+   draw, so at the draw it has no choice and its numbers are theirs.
 3. **Calling ranges facing a shove looked far too wide** at seven-handed, 27% of
    all hands against a 40bb jam. That was measured before several fixes and has
    not been re-checked. If it is still true, it inflates everything downstream.
@@ -74,11 +84,21 @@ asks the solver's table which bucket it is in.
 
 ## How to trust a number
 
-Do not read a strategy without checking it has converged. `scripts/converge.mjs`
-reads the same decision back at rising iteration counts; a figure still moving
-between checkpoints is not an answer. Seven-handed with the fine abstraction
-never settled at all — 679 nodes against 3,463 buckets is 2.35 million
-information sets — which is why the solver has its own coarse one.
+Do not read a strategy without checking how exploitable it is.
+`scripts/exploitability.mjs` finds a best response for every seat against the
+others' average strategy and reports what they could win by it, summed (NashConv,
+bb/100). `--stored` measures a solve the server saved. `scripts/converge.mjs`
+still reads the same decision back at rising iteration counts, but that is the
+proxy this replaced, and a figure can stop moving while still being beatable.
+
+The exploitability figure is a lower bound, and only comparable at the same
+`--train` and `--evaluate`. The responder is trained on one seeded set of deals
+and priced on another, and it deviates from the average strategy only where an
+action beats it by more than two standard errors - without that gate it chased
+noise and lost to the strategy it was responding to. More training deals find
+more. Seven-handed with the fine abstraction never settled at all — 679 nodes
+against 3,463 buckets is 2.35 million information sets — which is why the solver
+has its own coarse one.
 
 The invariants worth keeping, all in the tests:
 
@@ -92,11 +112,34 @@ The invariants worth keeping, all in the tests:
 
 ## The algorithm, and what else could be tried
 
-Monte Carlo CFR, external sampling, with CFR+ regret flooring and linear
-averaging. One iteration picks a traverser, deals a table off a single deck,
-computes the value of every action at the traverser's own decisions and samples
-one action everywhere else. Regrets accumulate at the traverser; the average
-strategy accumulates at the other seats, which is what converges.
+Monte Carlo CFR, external sampling. One iteration picks a traverser, deals a
+table off a single deck, computes the value of every action at the traverser's
+own decisions and samples one action everywhere else. Regrets accumulate at the
+traverser; the average strategy accumulates at the other seats, which is what
+converges. How regrets and the average accumulate is `--algorithm`: `cfr+`
+(regret floored at zero, linear averaging - the default, unchanged) or `dcfr`.
+
+**Discounted CFR is built and measured, and it is the better choice.** Six-handed,
+40bb, 1.5bb ante, joint, same seed, NashConv in bb/100 (100,000 training deals a
+pass, 300,000 to price):
+
+| Iterations | CFR+ | DCFR, step every 10k | DCFR, step every 50k |
+| --- | --- | --- | --- |
+| 500k | 454.3 | 277.6 | 126.8 |
+| 1M | 306.1 | 177.5 | 87.4 |
+| 2M | 192.8 | 112.3 | 57.6 |
+| 3M | 144.5 | 89.7 | **47.0** |
+
+A third of the exploitability at 3M, at the same ~50 seconds a million. The step
+size matters nearly as much as the algorithm: MCCFR has no full iterations, so a
+DCFR "step" is `every` sampled iterations, and halving negative regret every 10k
+forgets what a rarely-reached decision learned before it is visited again. 50k is
+now the default. Larger steps have not been tried and the trend says they might
+help. Heads-up told the same story (800k iterations: 17.5 vs 4.5).
+
+What has *not* been checked is whether the lower exploitability moves any
+number a player reads - RFI, the call-off width, the snow. The caveat below still
+applies.
 
 **The caveat first: an algorithm change makes this converge faster, it does not
 make it a different game.** Nothing below will move RFI from 18% to 25%. That
@@ -105,19 +148,11 @@ Do not spend effort here expecting it to close.
 
 Ranked by what they are worth against what they cost:
 
-1. **Discounted CFR.** Brown and Sandholm's successor to CFR+: rather than
-   flooring regrets at zero, discount them - positives by `t^α/(t^α+1)`,
-   negatives by `t^β/(t^β+1)`, the strategy sum by `(t/(t+1))^γ`, with α=1.5,
-   β=0, γ=2. Roughly ten lines, purely a change to accumulation weights, and it
-   beats CFR+ in large games by most in the early iterations, which is where
-   this actually lives. Best ratio of upside to work by a distance.
-2. **Exploitability.** Not a variant - the measurement whose absence keeps
-   biting. "Converged" currently means "the number stopped moving between
-   checkpoints", which is a proxy, and twice in this project that proxy was
-   wrong. A best response against the average strategy is feasible at 146
-   buckets and 115,072 nodes, and it turns a judgement call into a number.
-   Worth doing *before* more tuning, because otherwise a change cannot be
-   evaluated.
+1. ~~**Discounted CFR.**~~ Done - see above. Positives discounted by
+   `t^α/(t^α+1)`, negatives by `t^β/(t^β+1)`, the average weighted by `t^γ`,
+   α=1.5, β=0, γ=2.
+2. ~~**Exploitability.**~~ Done - `scripts/exploitability.mjs`. It is what
+   made item 1 a measurement instead of a hope.
 3. **Vectorised CFR instead of Monte Carlo.** The reason for sampling was 2.6
    million hands. The solver no longer reasons about 2.6 million hands; it
    reasons about 146 buckets, which is fewer than a hold'em preflop solver's
@@ -149,9 +184,10 @@ caught by checking invariants that a learned approximator would blur.
 2. **Re-measure the call-off width** facing a shove, now that open-shoving is
    gone and the ante is in. If it is still 27%, find out why before trusting any
    range.
-3. **Exploitability**, so that every claim after this one is measured rather
-   than inferred from watching numbers settle.
+3. ~~**Re-read RFI on a DCFR solve.**~~ Done: 19 / 21 / 27 / 38 at NashConv 22,
+   so the gap is not convergence.
 4. **Add a second 3-bet size.** It is the most likely remaining explanation for
    the RFI gap, and the tree already supports sizes being a list.
-5. **Discounted CFR**, which is cheap and helps everything above converge.
+5. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
+   more than CFR+ to DCFR.
 6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
