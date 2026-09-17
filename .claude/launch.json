@@ -6,6 +6,16 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["serve.js"],
       "port": 43195
+    },
+    {
+      "name": "drawsolver-6max-dcfr",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--max-old-space-size=8000", "serve.js", "--solve", "--joint",
+        "--players", "6", "--stack", "40", "--ante", "0.25",
+        "--algorithm", "dcfr", "--iterations", "10000000"
+      ],
+      "port": 43195
     }
   ]
 }
