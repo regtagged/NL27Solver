@@ -16,17 +16,23 @@ const solver = (algorithm) => new Solver({
 });
 const regretsOf = (s) => s.regret.filter(Boolean).flatMap((block) => Array.from(block));
 
-test('a Discounted CFR step halves negative regret, and keeps more positive regret as it goes', () => {
+test('a Discounted CFR step discounts regret less the longer a solve runs', () => {
   const early = [Float32Array.from([8, -8, 0]), null];
   discountRegrets(early, 1, DCFR_DEFAULTS);
   assert.deepEqual(Array.from(early[0]), [4, -4, 0]);
 
-  // A hundred steps in, positive regret keeps 1000/1001 of itself; negative
-  // regret still loses half, which is what lets an early mistake be forgotten.
+  // A hundred steps in, both sides keep nearly all of themselves: positive
+  // regret 1000/1001, negative 100/101 at β=1. Keeping the negative side is
+  // what stops a dominated action climbing back on a lucky sample, which at the
+  // paper's β=0 - halving it every step, for ever - it never stops doing.
   const late = [Float32Array.from([8, -8])];
   discountRegrets(late, 100, DCFR_DEFAULTS);
   assert.ok(late[0][0] > 7.99 && late[0][0] < 8);
-  assert.equal(late[0][1], -4);
+  assert.ok(late[0][1] < -7.9 && late[0][1] > -8);
+
+  const paper = [Float32Array.from([8, -8])];
+  discountRegrets(paper, 100, { ...DCFR_DEFAULTS, beta: 0 });
+  assert.equal(paper[0][1], -4);
 });
 
 test('CFR+ is the default and never holds a negative regret; Discounted CFR does', () => {
@@ -36,6 +42,31 @@ test('CFR+ is the default and never holds a negative regret; Discounted CFR does
 
   const discounted = solver('dcfr').run(20000);
   assert.ok(regretsOf(discounted).some((regret) => regret < 0));
+});
+
+test('exploration is off unless asked for, and off changes nothing', () => {
+  assert.equal(solver().explore, 0);
+  const asked = new Solver({
+    config: headsUp, joint: true, abstraction: 'coarse', seed: 3, explore: 0,
+  }).run(20000);
+  assert.deepEqual(regretsOf(asked), regretsOf(solver().run(20000)));
+});
+
+test('exploration puts traffic down lines the strategy would not take', () => {
+  const explored = new Solver({
+    config: headsUp, joint: true, abstraction: 'coarse', seed: 3, explore: 0.25,
+  }).run(20000);
+  // Counting decisions reached is too coarse - heads-up reaches all of them
+  // either way. What exploration adds is traffic for the hands that would not
+  // have gone there, so the count is of decisions a hand has actually learned:
+  // a line nobody plays is a line nobody learns.
+  const trained = (s) => s.average.reduce((sum, block) => {
+    if (!block) return sum;
+    let count = 0;
+    for (let i = 0; i < block.length; i += 1) if (block[i] > 0) count += 1;
+    return sum + count;
+  }, 0);
+  assert.ok(trained(explored) > trained(solver().run(20000)));
 });
 
 test('an algorithm it does not know is refused rather than ignored', () => {
@@ -62,6 +93,21 @@ test('solving shrinks what a best response can take from the average strategy', 
 test('a stored solve says which algorithm made it, and will not load into another', () => {
   assert.equal(solveKey(headsUp, true, 3e6), '2p-40bb-0.5_1-a0.25each-joint-3M');
   assert.equal(solveKey(headsUp, true, 3e6, 'dcfr'), '2p-40bb-0.5_1-a0.25each-joint-dcfr-3M');
+  assert.equal(
+    solveKey({ ...headsUp, openTo: 2.5, threeBetTo: { inPosition: 7, blinds: 9 } }, true, 1e7, 'dcfr'),
+    '2p-40bb-0.5_1-a0.25each-o2.5-3b7_9-joint-dcfr-10M',
+    'a different sizing is a different file',
+  );
+  assert.equal(
+    solveKey(headsUp, true, 1e7, 'dcfr', { beta: 0 }),
+    '2p-40bb-0.5_1-a0.25each-joint-dcfr-b0-10M',
+    'and so is a different discount',
+  );
+  assert.equal(
+    solveKey(headsUp, true, 1e7, 'dcfr', null, 0.02),
+    '2p-40bb-0.5_1-a0.25each-joint-dcfr-e0.02-10M',
+    'and so is exploring',
+  );
 
   const dir = mkdtempSync(join(tmpdir(), 'nl27-'));
   try {

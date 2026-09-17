@@ -15,8 +15,8 @@ import { extname, join, normalize, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Solver } from './lib/solve.js';
-import { indexNodes, strategyTree, foldRoundTo } from './lib/browse.js';
-import { positionNames, preDrawOrder } from './lib/tree.js';
+import { indexNodes, strategyTree, foldRoundTo, followLine } from './lib/browse.js';
+import { positionNames, preDrawOrder, threeBetFlag } from './lib/tree.js';
 import { save, load, solveKey } from './lib/checkpoint.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,22 +61,31 @@ if (argv.includes('--solve')) {
     bigBlind: Number(flag('bb', 1)),
     ante: Number(flag('ante', 0.6)),
     anteMode: flag('ante-mode', 'each'),
+    openTo: Number(flag('open', 3)),
+    threeBetTo: threeBetFlag(flag('three-bet')),
     nodeLimit: 2e7,
   };
   const { players } = config;
   const algorithm = flag('algorithm', 'cfr+');
+  // Discounted CFR's knobs, when they are being turned: `--beta 0` is the
+  // paper's setting, which converges as fast and leaves junk hands playable.
+  const discount = {};
+  if (argv.includes('--every')) discount.every = Number(flag('every'));
+  if (argv.includes('--beta')) discount.beta = Number(flag('beta'));
+  const tuning = Object.keys(discount).length ? discount : undefined;
+  const explore = Number(flag('explore', 0));
   process.stdout.write(`Solving ${players}-handed ${config.stack}bb, `
     + `blinds ${config.smallBlind}/${config.bigBlind}`
     + `${config.ante ? `, ante ${config.ante} (${config.anteMode})` : ''}, `
     + `${iterations.toLocaleString()} iterations of ${algorithm}…\n`);
   const started = Date.now();
   const joint = argv.includes('--joint');
-  const solver = new Solver({ config, abstraction: 'coarse', joint, algorithm });
+  const solver = new Solver({ config, abstraction: 'coarse', joint, algorithm, discount: tuning, explore });
 
   // A solve is minutes of work and the answer never changes, so it is read back
   // rather than paid for again. `--fresh` forces one, for when the question is
   // whether the solver has changed rather than what it says.
-  const key = solveKey(config, joint, iterations, algorithm);
+  const key = solveKey(config, joint, iterations, algorithm, solver.discount, solver.explore);
   const file = resolve(here, 'solves', key);
   const loaded = argv.includes('--fresh') ? false : load(solver, file);
   if (loaded) {
@@ -88,17 +97,80 @@ if (argv.includes('--solve')) {
     console.log(`  solved and stored ${(written.bytes / 1024 / 1024).toFixed(0)} MB`);
   }
   const rows = JSON.parse(readFileSync(dataFile)).rows;
-  solve = {
-    solver,
-    rows,
-    players,
-    config,
-    names: positionNames(players),
-    nodes: indexNodes(solver.tree, players),
-    iterations,
-  };
-  console.log(`  ${solve.nodes.size} pre-draw decisions, `
-    + `${((Date.now() - started) / 1000).toFixed(0)}s`);
+
+  /**
+   * One betting structure, ready to be browsed.
+   *
+   * Two sizings of the same game are two different trees - different nodes,
+   * different actions, different sizes on the labels - so they are two views to
+   * switch between rather than one view with two sets of numbers in it.
+   */
+  const viewOf = (built, sizing, count, name) => ({
+    solver: built,
+    config: sizing,
+    iterations: count,
+    key: name,
+    label: describeSizing(sizing),
+    game: describeGame(sizing),
+    nodes: indexNodes(built.tree, players),
+  });
+
+  const views = [viewOf(solver, config, iterations, key)];
+
+  // `--also` adds structures that have already been solved and stored; the
+  // stored file says what game it was, so it takes a solve's name and nothing else.
+  for (const also of (flag('also') ?? '').split(',').map((name) => name.trim()).filter(Boolean)) {
+    const head = JSON.parse(readFileSync(resolve(here, 'solves', `${also}.json`)));
+    if (head.config.players !== players) {
+      console.error(`  ${also} is ${head.config.players}-handed; this one is ${players}-handed.`);
+      process.exit(1);
+    }
+    const other = new Solver({
+      config: head.config,
+      abstraction: 'coarse',
+      joint: head.joint,
+      algorithm: head.algorithm ?? 'cfr+',
+      // Its own settings, not today's defaults: the file is what it is.
+      discount: head.discount ?? undefined,
+      explore: head.explore ?? 0,
+    });
+    if (!load(other, resolve(here, 'solves', also))) {
+      console.error(`  ${also} does not load: it was solved on a different tree.`);
+      process.exit(1);
+    }
+    views.push(viewOf(other, head.config, head.iterations, also));
+    console.log(`  also serving ${also}`);
+  }
+
+  views.forEach((view, index) => { view.index = index; });
+  solve = { rows, players, names: positionNames(players), views };
+  console.log(`  ${views.map((view) => `${view.label}: ${view.nodes.size} pre-draw decisions`).join(', ')}`
+    + `, ${((Date.now() - started) / 1000).toFixed(0)}s`);
+}
+
+/** How a structure is named in the switcher: the sizes that make it that game. */
+function describeSizing(config) {
+  const threeBet = config.threeBetTo
+    ? `3-bet ${config.threeBetTo.inPosition}/${config.threeBetTo.blinds}bb`
+    : '3-bet jam only';
+  return `${config.openTo}x open · ${threeBet}`;
+}
+
+/**
+ * The game underneath the sizing, which is the other half of what a structure
+ * is: seats and dead money decide how wide anybody opens before a size does.
+ */
+function describeGame(config) {
+  if (!config.ante) return `${config.players}-handed · no ante`;
+  const dead = config.ante * (config.anteMode === 'button' ? 1 : config.players);
+  return `${config.players}-handed · ${config.ante}bb ante `
+    + `${config.anteMode === 'button' ? 'button' : 'each'} · ${dead.toFixed(2).replace(/\.?0+$/, '')}bb dead`;
+}
+
+/** Which structure a request is about; the first one when it does not say. */
+function viewFrom(url, name) {
+  const at = Number(url.searchParams.get(name));
+  return solve.views[Number.isInteger(at) ? at : 0] ?? solve.views[0];
 }
 
 const json = (response, body) => {
@@ -115,47 +187,82 @@ const server = createServer(async (request, response) => {
       running: true,
       players: solve.players,
       names: solve.names,
-      iterations: solve.iterations,
-      config: solve.config,
       // What each seat started the hand with, which is the thing a strategy is
       // only meaningful relative to.
-      stacks: solve.names.map(() => solve.config.stack),
+      stacks: solve.names.map(() => solve.views[0].config.stack),
       // Seats in the order they act before the draw: UTG first, blinds last.
       order: preDrawOrder(solve.players),
-      root: solve.solver.tree.root,
-      nodes: [...solve.nodes.values()],
+      views: solve.views.map((view, index) => ({
+        index,
+        key: view.key,
+        label: view.label,
+        game: view.game,
+        config: view.config,
+        iterations: view.iterations,
+        root: view.solver.tree.root,
+      })),
+    });
+  }
+
+  /**
+   * The same line in another structure, for switching without losing your place.
+   *
+   * Node ids mean nothing across trees, so the line is walked: who acted and
+   * what kind of thing they did. A line the other structure does not have -
+   * anything under a sized 3-bet, when the other only has the jam - lands on
+   * its root instead, and says it was not exact.
+   */
+  if (url.pathname === '/api/same') {
+    if (!solve) return json(response, { running: false });
+    const to = viewFrom(url, 'to');
+    const entry = viewFrom(url, 'from').nodes.get(Number(url.searchParams.get('node')));
+    const at = entry ? followLine(to.solver.tree, entry.sequence) : -1;
+    return json(response, {
+      running: true,
+      node: at >= 0 ? at : to.solver.tree.root,
+      exact: at >= 0,
     });
   }
 
   if (url.pathname === '/api/strategy') {
     if (!solve) return json(response, { running: false });
+    const view = viewFrom(url, 'view');
     const id = Number(url.searchParams.get('node'));
-    const answer = strategyTree(solve.solver, id, solve.rows);
+    const answer = strategyTree(view.solver, id, solve.rows);
     if (!answer) {
       response.writeHead(404, { 'content-type': 'text/plain' }).end('No such decision');
       return;
     }
-    const entry = solve.nodes.get(id);
+    const entry = view.nodes.get(id);
     return json(response, {
       running: true,
       id,
+      view: view.index,
       seat: answer.seat,
       seatName: solve.names[answer.seat],
       sequence: entry?.sequence ?? [],
       actions: answer.actions.map((label, i) => ({
         label,
+        kind: answer.kinds[i],
         child: entry?.actions[i]?.child ?? -1,
       })),
-      // A seat not yet in the hand is offered its own actions, not a way to
-      // get to them: the question is almost always "and then what", so landing
-      // on what follows is one click rather than two.
+      // Every seat, offered its own decision and everything it could do there.
+      // A seat that has already acted is offered the decision it actually made
+      // - the one in this hand, with the action it took marked and the ones it
+      // passed up alongside, because "what else could it have done" is the next
+      // question after "what did it do". A seat not yet in the hand has no such
+      // decision in this line, so it gets the one it would face if everyone
+      // between folded, which is how people ask about it anyway.
       jumps: solve.names.map((_, seat) => {
-        const at = foldRoundTo(solve.solver.tree, id, seat);
-        if (at < 0) return { node: -1, actions: [] };
+        const acted = [...(entry?.sequence ?? [])].reverse().find((step) => step.seat === seat);
+        const at = acted ? acted.at : foldRoundTo(view.solver.tree, id, seat);
+        if (at < 0) return { node: -1, took: -1, actions: [] };
         return {
           node: at,
-          actions: solve.solver.nodes[at].actions.map((action) => ({
+          took: acted ? acted.index : -1,
+          actions: view.solver.nodes[at].actions.map((action) => ({
             label: action.label,
+            kind: action.kind,
             child: action.child,
           })),
         };

@@ -36,6 +36,41 @@ Useful flags: `--players`, `--stack`, `--sb`, `--bb`, `--ante`, `--ante-mode`,
 ending at the draw), `--algorithm cfr+|dcfr` (CFR+ by default, or Discounted
 CFR), and `--fresh` (ignore a stored solve).
 
+Two knobs on Discounted CFR, both of which change the answer rather than just
+the speed, so each writes its own stored solve. `--beta` is how much of a
+negative regret survives a discount step: at the paper's `0` a buried action
+halves its debt every step for ever, so hands that should never be played keep
+coming back at a few percent; the default here is `1`, which keeps the debt and
+takes that residue to zero. `--explore 0.02` makes the sampler take a uniform
+legal action 2% of the time, so a line the strategy avoids still gets trained —
+without it a hand that opens 0% never learns how to play after opening, and so
+prices opening as playing randomly and stays folded for the wrong reason.
+
+Sizing: `--open 2.5` sets the open, and `--three-bet 7,9` adds a 3-bet short of
+all-in — to 7bb from a seat in position and to 9bb from the blinds, beside the
+jam rather than instead of it. The same size is used whether or not the open was
+flatted. It costs: a sized 3-bet takes the six-handed tree from 65k nodes to
+518k, nearly all of it after the draw.
+
+`--also <stored solve>` serves a second structure beside the first — a comma
+separated list for more — and the viewer switches between them. Each is its own
+game with its own tree and its own sizes; switching keeps your place in the hand
+by walking the same line, who acted and what kind of action, rather than by node
+id, and says so when the other structure has no such line:
+
+```bash
+npm run browse -- --joint --players 6 --ante 0.25 --open 2.5 --three-bet 7,9 \
+  --algorithm dcfr --iterations 10000000 \
+  --also 6p-40bb-0.5_1-a0.25each-joint-dcfr-10M
+```
+
+In the viewer, a seat's box is a link back to that seat's own decision, and
+every seat lists the whole of what it could do there — the action it took in
+this line is marked, and the ones it passed up are still links, so a hand can be
+walked back and sent down the other road. Colours say what an action is: grey
+folds, green calls, amber opens, **red a 3-bet that is not all-in**, and
+**purple all-in**.
+
 ## Checking it
 
 ```bash

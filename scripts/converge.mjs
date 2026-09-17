@@ -12,6 +12,7 @@ import { parseHand } from '../lib/cards.js';
 import { handIndex } from '../lib/eval27.js';
 import { buckets } from '../lib/abstraction.js';
 import { Solver } from '../lib/solve.js';
+import { threeBetFlag } from '../lib/tree.js';
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -26,6 +27,8 @@ const config = {
   bigBlind: Number(flag('bb', 1)),
   ante: Number(flag('ante', 0.6)),
   anteMode: flag('ante-mode', 'each'),
+  openTo: Number(flag('open', 3)),
+  threeBetTo: threeBetFlag(flag('three-bet')),
   nodeLimit: 2e7,
 };
 const target = Number(flag('to', 40000000));
@@ -43,6 +46,8 @@ const solver = new Solver({
   seed: 20260916,
   abstraction: argv.includes('--fine') ? 'fine' : 'coarse',
   algorithm: flag('algorithm', 'cfr+'),
+  discount: argv.includes('--beta') ? { beta: Number(flag('beta')) } : undefined,
+  explore: Number(flag('explore', 0)),
 });
 const table = solver.bucketTable;
 const watched = WATCH.map(([label, text]) => [label, table[handIndex(parseHand(text))]]);

@@ -50,10 +50,25 @@ asks the solver's table which bucket it is in.
    The joint solve did *not* close it, which killed the obvious explanation.
    Convergence did not close it either: a 10M-iteration Discounted CFR solve,
    measured at NashConv 22.0 bb/100 against 144.5 for a 3M CFR+ one, opens
-   19 / 21 / 27 / 38 (SB 71%). Remaining candidates, in order: the benchmark is
-   a proxy from other games and may be loose; the single 3x sizing gives no
-   small 3-bet, so opening invites only call-or-jam; the tree has one raise size
-   where a real game has several.
+   19 / 21 / 27 / 38 (SB 71%). Neither did sizing: a 2.5x open with a 3-bet to
+   7bb in position and 9bb from the blinds, solved the same way, opens
+   18 / 21 / 27 / 37 (SB 69%) at NashConv 25.5. The sized 3-bet is used - 4.3%
+   of hands from the HJ, 4.8% squeezing, and UTG facing one folds 48%, calls 34%
+   and jams 18% - so the tree was exercised and the ranges still did not widen.
+   That leaves the benchmark itself as the first candidate: it is a proxy from
+   other games, and nobody has solved the spot it describes. Below it: this is a
+   40bb game where a real one is deeper, and the coarse abstraction shares one
+   strategy across every hand in a bucket.
+
+   Both of those solves were made at β=0. β=1 is now the default and reads a few
+   points wider - mostly from marginal groups purifying rather than from new
+   hands - so the numbers above are the old knob's, and the gap they describe is
+   smaller than it was. Re-measure before quoting them.
+
+   Reading those two NashConv figures against each other is weaker than reading
+   them within one tree. The measure is a lower bound from a fixed search budget,
+   and the sized tree is eight times the size, so the same budget finds
+   proportionally less of what is there.
 2. **Snowing is not demonstrated.** The joint solve makes it *possible* — the
    draw is a decision and the post-draw street is solved, which a rollout could
    never express. But the hands tested were the wrong ones: 2-2-5-5-8 and
@@ -74,13 +89,30 @@ asks the solver's table which bucket it is in.
 4. **Convertibility is modelled but unverified.** J-5-4-3-2 can pat or draw one
    depending on what the seats before it did; the tree makes draws public and in
    order, so the solve *can* see it. Whether it does has not been measured.
-5. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
+5. **Ten million iterations is not enough for the rarest buckets.** A bucket
+   labelled with a low second card - `Pat J5` is J-5-4-3-2 and nothing else -
+   holds one rank pattern, 1,020 hands, 0.039% of the deck. Six-handed at 10M
+   the button faces it about 300 times, and 300 samples do not resolve a
+   decision. J-5-4-3-2 read 78% / 100% / 75% / 100% across four solves; at 100M,
+   with 3,124 visits, it reads 100% and Q-5-4-3-2 settles at 99% after bouncing
+   16 / 0 / 43 / 77. Visits scale linearly with iterations, so this is a price
+   rather than a puzzle: **70 minutes a sim instead of 8, for the best hands in
+   the game to be right.** Exploitability will not tell you - at 0.04% of the
+   range these hands cost nothing to get wrong, which is exactly why the solver
+   leaves them and exactly why a reader notices.
+
+   Not everything thin is starved. The jack-high *draws* get 5,000 to 24,000
+   visits and are still unordered, because they are worth what folding is worth:
+   -26 to -30 bb/100 against -25 for folding. That is indifference, not noise,
+   and no amount of solving will order a tie.
+6. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
    finished hand is worth for anything else in the same process. The draw policy
    cache key now includes whether calibration has happened, which closes the
    trap that existed, but the coupling is still there and wants a parameter
    rather than module state.
-6. **No 6-max / 7-max switching in the viewer.** One solve per server start.
-   Both configurations store fine; the UI just cannot swap between them.
+7. **No 6-max / 7-max switching in the viewer.** `--also` switches between
+   sizings of one game, but not between player counts: every view in a server
+   has to have the same seats.
 
 ## How to trust a number
 
@@ -137,6 +169,35 @@ forgets what a rarely-reached decision learned before it is visited again. 50k i
 now the default. Larger steps have not been tried and the trend says they might
 help. Heads-up told the same story (800k iterations: 17.5 vs 4.5).
 
+**β is 1 here, not the paper's 0.** β decides how much of a negative regret
+survives a discount step, which decides whether an action that should never be
+played can climb back on a lucky sample. At β=0 it halves every step for ever, so
+the debt is capped and the noise of a sampled iteration keeps beating it: hands
+drawing three cards or more - never opens - stayed at 2.7% on the button at 10M.
+At β=1 they go to 0.0%. It costs nothing in convergence. Six-handed 10M, same
+solve, priced at 100,000 training deals: β=0 is 22.0 ± 0.5 bb/100 exploitable and
+β=1 is -0.3 ± 0.7, which is a search that found nothing rather than a proof; with
+three times the search β=1 prices at 3.3 ± 0.7. Exploitability here is a lower
+bound and only means anything against another number found with the same budget.
+
+Removing the residue also moves RFI, in both directions and for two different
+reasons: junk leaving the range narrows it, and marginal groups purifying - a
+74% open becoming 95% - widens it more. Six-handed the button went up by 2-6
+points. That is a knob being turned, not the game being different; see the
+caveat.
+
+**Exploration, `--explore`, is the other half of it.** The average strategy only
+accumulates where play actually goes, so a bucket that opens 0% never trains its
+own post-draw decisions. Opening then gets priced as opening and playing
+randomly, which is worse than folding, so it stays at 0% - and it stays there
+whichever way round it should have been, which is how jack-high draws came out
+unordered on the button. Post-open training weight for a never-opened bucket was
+~10² against ~10⁸ for an opened one. `--explore 0.02` makes the sampler take a
+uniform legal action 2% of the time, so every line keeps getting traffic while
+the average still reports a clean 0% for the hands that fold. It is deliberately
+not importance-weighted: the correct weighting gives an explored line weight
+zero, which is the whole thing it is there to fix. The bias is O(ε).
+
 What has *not* been checked is whether the lower exploitability moves any
 number a player reads - RFI, the call-off width, the snow. The caveat below still
 applies.
@@ -150,7 +211,7 @@ Ranked by what they are worth against what they cost:
 
 1. ~~**Discounted CFR.**~~ Done - see above. Positives discounted by
    `t^α/(t^α+1)`, negatives by `t^β/(t^β+1)`, the average weighted by `t^γ`,
-   α=1.5, β=0, γ=2.
+   α=1.5, β=1, γ=2.
 2. ~~**Exploitability.**~~ Done - `scripts/exploitability.mjs`. It is what
    made item 1 a measurement instead of a hope.
 3. **Vectorised CFR instead of Monte Carlo.** The reason for sampling was 2.6
@@ -186,8 +247,10 @@ caught by checking invariants that a learned approximator would blur.
    range.
 3. ~~**Re-read RFI on a DCFR solve.**~~ Done: 19 / 21 / 27 / 38 at NashConv 22,
    so the gap is not convergence.
-4. **Add a second 3-bet size.** It is the most likely remaining explanation for
-   the RFI gap, and the tree already supports sizes being a list.
+4. ~~**Add a second 3-bet size.**~~ Done, and it did not move RFI - see above.
+   `--open` and `--three-bet` set the sizing, and `--also` serves a second
+   structure beside the first, which the viewer switches between - the way to
+   see what a sizing changed, a line at a time.
 5. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
    more than CFR+ to DCFR.
 6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.

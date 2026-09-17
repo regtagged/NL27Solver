@@ -14,7 +14,7 @@
 
 import { parseHand, RANKS } from '../lib/cards.js';
 import { handIndex } from '../lib/eval27.js';
-import { DRAWING, PRE_DRAW } from '../lib/tree.js';
+import { DRAWING, PRE_DRAW, threeBetFlag } from '../lib/tree.js';
 import { Solver } from '../lib/solve.js';
 import { load, solveKey } from '../lib/checkpoint.js';
 import { resolve, dirname } from 'node:path';
@@ -33,20 +33,24 @@ const config = {
   bigBlind: Number(flag('bb', 1)),
   ante: Number(flag('ante', 0.6)),
   anteMode: flag('ante-mode', 'each'),
+  openTo: Number(flag('open', 3)),
+  threeBetTo: threeBetFlag(flag('three-bet')),
   nodeLimit: 5e7,
 };
 const joint = argv.includes('--joint');
 const target = Number(flag('to', 20000000));
 const algorithm = flag('algorithm', 'cfr+');
 const stored = argv.includes('--stored') ? Number(flag('stored')) : null;
+const discount = argv.includes('--beta') ? { beta: Number(flag('beta')) } : undefined;
+const explore = Number(flag('explore', 0));
 
 const solver = new Solver({
-  config, joint, abstraction: 'coarse', seed: 20260917, algorithm,
+  config, joint, abstraction: 'coarse', seed: 20260917, algorithm, discount, explore,
 });
 
 let head = null;
 if (stored !== null) {
-  const key = solveKey(config, joint, stored, algorithm);
+  const key = solveKey(config, joint, stored, algorithm, solver.discount, solver.explore);
   head = load(solver, resolve(dirname(fileURLToPath(import.meta.url)), '..', 'solves', key));
   if (!head) {
     console.error(`No stored solve matches ${key}.`);
