@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Solver } from './lib/solve.js';
 import { indexNodes, strategyTree, foldRoundTo } from './lib/browse.js';
-import { positionNames } from './lib/tree.js';
+import { positionNames, preDrawOrder } from './lib/tree.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
@@ -53,16 +53,29 @@ if (!existsSync(dataFile)) {
 let solve = null;
 if (argv.includes('--solve')) {
   const iterations = Number(flag('iterations', 2000000));
-  const players = Number(flag('players', 7));
-  process.stdout.write(`Solving ${players}-handed, ${iterations.toLocaleString()} iterations…\n`);
+  const config = {
+    players: Number(flag('players', 7)),
+    stack: Number(flag('stack', 40)),
+    smallBlind: Number(flag('sb', 0.5)),
+    bigBlind: Number(flag('bb', 1)),
+    ante: Number(flag('ante', 0)),
+    anteMode: flag('ante-mode', 'none'),
+    nodeLimit: 2e7,
+  };
+  const { players } = config;
+  process.stdout.write(`Solving ${players}-handed ${config.stack}bb, `
+    + `blinds ${config.smallBlind}/${config.bigBlind}`
+    + `${config.ante ? `, ante ${config.ante} (${config.anteMode})` : ''}, `
+    + `${iterations.toLocaleString()} iterations…\n`);
   const started = Date.now();
-  const solver = new Solver({ config: { players, nodeLimit: 2e7 } });
+  const solver = new Solver({ config });
   solver.run(iterations);
   const rows = JSON.parse(readFileSync(dataFile)).rows;
   solve = {
     solver,
     rows,
     players,
+    config,
     names: positionNames(players),
     nodes: indexNodes(solver.tree, players),
     iterations,
@@ -86,6 +99,12 @@ const server = createServer(async (request, response) => {
       players: solve.players,
       names: solve.names,
       iterations: solve.iterations,
+      config: solve.config,
+      // What each seat started the hand with, which is the thing a strategy is
+      // only meaningful relative to.
+      stacks: solve.names.map(() => solve.config.stack),
+      // Seats in the order they act before the draw: UTG first, blinds last.
+      order: preDrawOrder(solve.players),
       root: solve.solver.tree.root,
       nodes: [...solve.nodes.values()],
     });

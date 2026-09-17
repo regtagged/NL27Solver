@@ -6,27 +6,20 @@
 <title>Pre-draw strategy — 2-7 Lowball (Single Draw)</title>
 <style>
   :root {
-    color-scheme: light;
-    --bg: #f6f6f4;
-    --panel: #ffffff;
-    --line: rgba(16, 16, 20, 0.12);
-    --ink: #16161a;
-    --ink-2: #4a4a52;
-    --ink-3: #82828c;
-    --chip: rgba(16, 16, 20, 0.06);
-    --accent: #1565c0;
-    --fold: #9aa0a8;
+    color-scheme: dark;
+    --bg: #131316;
+    --panel: #1b1b1f;
+    --raised: #232328;
+    --line: rgba(255, 255, 255, 0.13);
+    --ink: #eeeef2;
+    --ink-2: #b4b4bd;
+    --ink-3: #81818b;
+    --chip: rgba(255, 255, 255, 0.07);
+    --accent: #5b8ff9;
+    --fold: #6c727a;
     --call: #40ac68;
-    --raise: #e0a33a;
+    --raise: #d8a03c;
     --allin: #c9433b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --bg: #141416; --panel: #1c1c1f; --line: rgba(255,255,255,.12);
-      --ink: #eeeef2; --ink-2: #b6b6be; --ink-3: #85858e; --chip: rgba(255,255,255,.08);
-      --fold: #6c727a;
-    }
   }
   * { box-sizing: border-box; }
   body {
@@ -48,7 +41,7 @@
 
   /* The seat strip is the navigation: every action is a link to where it goes. */
   .seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; padding: 12px; }
-  .seat { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--bg); }
+  .seat { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--raised); }
   .seat.is-acting { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
   .who { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .pos { font-weight: 700; font-size: 13px; }
@@ -146,7 +139,9 @@ async function load(node) {
 function renderSeats() {
   const d = state.data;
   const taken = new Map(d.sequence.map((entry) => [entry.seat, entry]));
-  const order = d.jumps.map((_, seat) => seat);
+  // Action order, not seat order: UTG first and the blinds last, which is how
+  // the decisions actually come round.
+  const order = state.order ?? d.jumps.map((_, seat) => seat);
 
   $('seats').innerHTML = order.map((seat) => {
     const acting = seat === d.seat;
@@ -164,7 +159,8 @@ function renderSeats() {
       lines = ['<span>—</span>'];
     }
     return `<div class="seat${acting ? ' is-acting' : ''}">`
-      + `<div class="who"><span class="pos">${d.seatNames?.[seat] ?? seatName(seat)}</span></div>`
+      + `<div class="who"><span class="pos">${seatName(seat)}</span>`
+      + `<span class="bb">${state.stacks?.[seat] ?? ''}bb</span></div>`
       + `<div class="lines">${lines.join('')}</div></div>`;
   }).join('');
 
@@ -239,7 +235,15 @@ if (!solve.running) {
     + 'Restart it with <code>--solve</code>.</div>';
 } else {
   names = solve.names;
-  $('meta').textContent = `${solve.players}-handed · ${solve.iterations.toLocaleString()} iterations`;
+  state.order = solve.order;
+  state.stacks = solve.stacks;
+  const c = solve.config;
+  const ante = c.ante
+    ? ` · ${c.ante}bb ante ${c.anteMode === 'button' ? '(button)' : '(each)'}`
+    : ' · no ante';
+  $('meta').innerHTML = `${solve.players}-handed &nbsp;·&nbsp; <strong>${c.stack}bb</strong>`
+    + ` &nbsp;·&nbsp; ${c.smallBlind}/${c.bigBlind}${ante}`
+    + ` &nbsp;·&nbsp; ${solve.iterations.toLocaleString()} iterations`;
   await load(solve.root);
 }
 </script>
