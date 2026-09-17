@@ -12,7 +12,8 @@
     "solve": "node --max-old-space-size=10000 scripts/solve.mjs",
     "start": "node serve.js",
     "rank": "node --max-old-space-size=6000 scripts/rank-hands.mjs",
-    "browse": "node --max-old-space-size=8000 serve.js --solve"
+    "browse": "node --max-old-space-size=8000 serve.js --solve",
+    "measure:triple": "node --max-old-space-size=8000 scripts/measure-triple.mjs"
   },
   "engines": {
     "node": ">=18"

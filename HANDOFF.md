@@ -15,7 +15,7 @@ is. This file is the honest state of play.
 | `lib/ranking.js` | The 7,462 display rows, and which draw each hand takes |
 | `lib/grouping.js` | The hierarchy a range is read in |
 | `lib/coarse.js` | The abstraction the **solver** runs on — a few hundred |
-| `lib/tree.js` | The betting tree, pre-draw through showdown |
+| `lib/tree.js` | The betting tree: rounds, draws between them, no limit or fixed limit |
 | `lib/rollout.js` | Fixed policy for a pre-draw-only solve |
 | `lib/solve.js` | Monte Carlo CFR — external sampling, CFR+ or Discounted CFR |
 | `lib/exploitability.js` | Best response per seat, and NashConv — how much a solve gives away |
@@ -89,13 +89,30 @@ asks the solver's table which bucket it is in.
 4. **Convertibility is modelled but unverified.** J-5-4-3-2 can pat or draw one
    depending on what the seats before it did; the tree makes draws public and in
    order, so the solve *can* see it. Whether it does has not been measured.
-5. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
+5. **Ten million iterations is not enough for the rarest buckets.** A bucket
+   labelled with a low second card - `Pat J5` is J-5-4-3-2 and nothing else -
+   holds one rank pattern, 1,020 hands, 0.039% of the deck. Six-handed at 10M
+   the button faces it about 300 times, and 300 samples do not resolve a
+   decision. J-5-4-3-2 read 78% / 100% / 75% / 100% across four solves; at 100M,
+   with 3,124 visits, it reads 100% and Q-5-4-3-2 settles at 99% after bouncing
+   16 / 0 / 43 / 77. Visits scale linearly with iterations, so this is a price
+   rather than a puzzle: **70 minutes a sim instead of 8, for the best hands in
+   the game to be right.** Exploitability will not tell you - at 0.04% of the
+   range these hands cost nothing to get wrong, which is exactly why the solver
+   leaves them and exactly why a reader notices.
+
+   Not everything thin is starved. The jack-high *draws* get 5,000 to 24,000
+   visits and are still unordered, because they are worth what folding is worth:
+   -26 to -30 bb/100 against -25 for folding. That is indifference, not noise,
+   and no amount of solving will order a tie.
+6. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
    finished hand is worth for anything else in the same process. The draw policy
    cache key now includes whether calibration has happened, which closes the
    trap that existed, but the coupling is still there and wants a parameter
    rather than module state.
-6. **No 6-max / 7-max switching in the viewer.** One solve per server start.
-   Both configurations store fine; the UI just cannot swap between them.
+7. **No 6-max / 7-max switching in the viewer.** `--also` switches between
+   sizings of one game, but not between player counts: every view in a server
+   has to have the same seats.
 
 ## How to trust a number
 
@@ -219,6 +236,47 @@ Deep CFR would dissolve the abstraction problem entirely by generalising across
 hands with a network rather than bucketing them. It is also a different runtime
 and much harder to verify, and three silent modelling bugs in this project were
 caught by checking invariants that a learned approximator would blur.
+
+## Fixed limit triple draw, so far
+
+The betting tree builds; nothing solves it yet. `lib/tree.js` now describes
+betting *rounds* rather than two hardcoded streets - `drawRounds: 3` gives four
+rounds around three draws, and `roundStreet(round)` says only which order a
+round runs in. `betting: 'limit'` swaps the sizing model for one bet size a
+round, a raise of the same size, a step up for the last two rounds, and a cap.
+`tripleDrawConfig()` is the whole game in one object. The single draw game is
+untouched: same 115,072 nodes seven-handed, same tree fingerprints, so every
+stored solve still loads.
+
+The cap is what bounds a limit tree, where stacks running out is what bounds a
+no limit one - which is why the config is 200bb rather than 40bb. Depth costs a
+limit tree nothing.
+
+**Two walls, both measured** - `npm run measure:triple` prints them:
+
+| draws | most drawn | nodes | growth |
+| --- | --- | --- | --- |
+| 1 | 2 | 1,070 | |
+| 2 | 2 | 25,964 | 24x |
+| 3 | 2 | **528,002** | 20x |
+| 3 | 3 | **2,878,616** | 36x |
+| 3 | 5 | over 3,000,000 | out of memory at 12GB |
+
+Each draw round multiplies the tree by twenty to ninety times, because what
+everyone drew is public and a state that forgets it is a different game. A
+two-card ceiling heads-up is 528 thousand nodes, the same order as the sized
+six-handed single draw tree that already solves.
+
+The second wall is the deck. Replacements are dealt before the walk, so that a
+hand comparing its actions compares them against one future rather than several,
+and that needs `5 + 3 x maxDraw` cards a player: 40 heads-up at five cards a
+draw, 60 three-handed, 66 six-handed even at two. **Triple draw is a heads-up
+game for this solver, and that is the deck's decision rather than anyone's.**
+
+What is not built is everything that solves it. `lib/solve.js` indexes a
+post-draw hand as `optionBucket[seat * 3 + draws[seat]]` - one draw round, three
+options, hardcoded - and `ranking.js`, `coarse.js` and `draws.js` all assume a
+hand is drawn to once. The draw ceiling decides how much of that work there is.
 
 ## What I would do next
 
