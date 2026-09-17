@@ -90,6 +90,57 @@ The invariants worth keeping, all in the tests:
   in the joint solver with zero deviation.
 - The hand classes cover all 2,598,960 hands exactly once.
 
+## The algorithm, and what else could be tried
+
+Monte Carlo CFR, external sampling, with CFR+ regret flooring and linear
+averaging. One iteration picks a traverser, deals a table off a single deck,
+computes the value of every action at the traverser's own decisions and samples
+one action everywhere else. Regrets accumulate at the traverser; the average
+strategy accumulates at the other seats, which is what converges.
+
+**The caveat first: an algorithm change makes this converge faster, it does not
+make it a different game.** Nothing below will move RFI from 18% to 25%. That
+gap is a question about the tree and about the benchmark, not about the solver.
+Do not spend effort here expecting it to close.
+
+Ranked by what they are worth against what they cost:
+
+1. **Discounted CFR.** Brown and Sandholm's successor to CFR+: rather than
+   flooring regrets at zero, discount them - positives by `t^α/(t^α+1)`,
+   negatives by `t^β/(t^β+1)`, the strategy sum by `(t/(t+1))^γ`, with α=1.5,
+   β=0, γ=2. Roughly ten lines, purely a change to accumulation weights, and it
+   beats CFR+ in large games by most in the early iterations, which is where
+   this actually lives. Best ratio of upside to work by a distance.
+2. **Exploitability.** Not a variant - the measurement whose absence keeps
+   biting. "Converged" currently means "the number stopped moving between
+   checkpoints", which is a proxy, and twice in this project that proxy was
+   wrong. A best response against the average strategy is feasible at 146
+   buckets and 115,072 nodes, and it turns a judgement call into a number.
+   Worth doing *before* more tuning, because otherwise a change cannot be
+   evaluated.
+3. **Vectorised CFR instead of Monte Carlo.** The reason for sampling was 2.6
+   million hands. The solver no longer reasons about 2.6 million hands; it
+   reasons about 146 buckets, which is fewer than a hold'em preflop solver's
+   1,326 combinations - and those run exact CFR, carrying a distribution over
+   hands at every node and computing counterfactual values directly. No sampling
+   variance, deterministic, typically far faster. The work is a 146x146
+   bucket-against-bucket equity matrix with card-removal corrections. The coarse
+   abstraction is what put this within reach; it was not an option before.
+4. **Regret-based pruning.** Between 80% and 99% of hands fold here, so much of
+   the tree is reached almost never. Skipping subtrees whose actions carry
+   heavily negative regret, and revisiting them periodically, fits this game in
+   a way it would not fit one with flatter ranges.
+
+Considered and not worth it: outcome sampling (cheaper iterations, far higher
+variance - external sampling is right at this size); public chance sampling (the
+draw *counts* are public but the cards are not, so it does not fit); average
+strategy sampling (helps with wide branching, and this has two to four actions).
+
+Deep CFR would dissolve the abstraction problem entirely by generalising across
+hands with a network rather than bucketing them. It is also a different runtime
+and much harder to verify, and three silent modelling bugs in this project were
+caught by checking invariants that a learned approximator would blur.
+
 ## What I would do next
 
 1. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
@@ -98,6 +149,9 @@ The invariants worth keeping, all in the tests:
 2. **Re-measure the call-off width** facing a shove, now that open-shoving is
    gone and the ante is in. If it is still 27%, find out why before trusting any
    range.
-3. **Add a second 3-bet size.** It is the most likely remaining explanation for
+3. **Exploitability**, so that every claim after this one is measured rather
+   than inferred from watching numbers settle.
+4. **Add a second 3-bet size.** It is the most likely remaining explanation for
    the RFI gap, and the tree already supports sizes being a list.
-4. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
+5. **Discounted CFR**, which is cheap and helps everything above converge.
+6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
