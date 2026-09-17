@@ -1,52 +1,39 @@
-# DrawSolver
+# NL27Solver
 
-Tools for **No Limit 2-7 Single Draw**: a ranked starting-hand viewer, and a
-pre-draw solver for the seven-handed 40bb game — 3x opens with all-in as the
-only 3-bet, and b25 / b100 / bAI after the draw.
+A solver and hand browser for **No Limit 2-7 Single Draw**.
 
-`docs/design.md` is the design and the reasoning — in particular what pruning
-the tree to how the game is actually played did to the cost of solving it:
-204 GB to 0.9 GB. This file is what works today and how to run it.
+Two tools over one engine:
 
-No build step and no dependencies. Node is the only requirement.
+- **Ranked starting hands** — all 7,462 of them by equity, in a four-colour
+  deck, showing what each hand draws and which cards it throws.
+- **Pre-draw strategy** — walk the betting tree a decision at a time and read
+  the range at whatever depth the question is asked, priced in big blinds.
 
-## The hand viewer
+`docs/design.md` is the design and the reasoning. `HANDOFF.md` is the state of
+play: what is settled, what is known to be wrong, and what is worth doing next.
 
-Build the ranked table once (about two minutes), then serve it:
+No build step and no dependencies. Node 18+ is the only requirement.
+
+## Running it
+
+Build the hand table once (about two minutes):
 
 ```bash
 npm run rank
 ```
 
-```bash
-npm start
-```
-
-Every one of the 7,947 starting hands, ranked by equity, in a four-colour deck,
-with how many combinations it stands for, what it draws, and which cards it
-throws. Filter by percentile band, by ranks held, by how many cards are drawn,
-by what the draw is drawing to, and by whether it can brick into a straight.
-
-A hand is split by **whether the cards it keeps are all one suit** — 75432 keeps
-all five and splits 1,020 plain against 4 flushes; K7543 throws the king and
-splits 1,008 against 16. That is worth 40 points of equity on the first and 14
-on the second, so the two are never one row.
-
-The equity is measured, not modelled: each hand is dealt opponents out of the
-same deck, everything draws under the policy in `lib/draws.js`, and showdowns
-are counted. Two numbers say it is calibrated — **average equity over the whole
-deck is 50.2% heads-up and 33.4% three-way**, against a theoretical 50% and
-33.3%.
-
-## The solver
+Then serve it. The first solve is stored, so later starts load in seconds:
 
 ```bash
-npm run solve -- --players 7 --iterations 20000000
+npm run browse -- --joint --players 6 --ante 0.25
 ```
 
-Monte Carlo CFR over the pre-draw tree. Seven-handed, twenty million iterations
-take about seven minutes and hold 30 MB, and the opening ranges come out
-monotone in hand strength.
+- `http://localhost:43195/` — ranked starting hands
+- `http://localhost:43195/strategy.html` — the pre-draw strategy browser
+
+Useful flags: `--players`, `--stack`, `--sb`, `--bb`, `--ante`, `--ante-mode`,
+`--iterations`, `--joint` (solve the draw and the post-draw street rather than
+ending at the draw), and `--fresh` (ignore a stored solve).
 
 ## Checking it
 
@@ -55,48 +42,46 @@ npm test
 ```
 
 ```bash
-npm run measure
+npm run measure          # the hand space, recounted from the deck
+npm run measure:tree     # the betting tree, and what a solve over it costs
+npm run measure:buckets  # the hand abstraction, priced at each level of detail
 ```
+
+Every measurement script recomputes the numbers quoted in the design, so none of
+them can quietly go stale.
 
 ```bash
-npm run measure:tree
+node --max-old-space-size=8000 scripts/rfi.mjs --players 6 --ante 0.25 --joint
+node --max-old-space-size=8000 scripts/converge.mjs --players 6
 ```
 
-```bash
-npm run measure:buckets
-```
+`rfi` reports raise-first-in by position — the number a player can check by eye —
+and what snow candidates do at the draw. `converge` reads the same decision back
+at rising iteration counts, which is how you tell a strategy that has settled
+from one that is still moving.
 
-`measure` recounts the hand space from the deck, `measure:tree` builds the
-seven-handed tree and reports what a solve over it would cost, and
-`measure:buckets` prices the hand abstraction at each level of detail. All three
-print numbers quoted in the design, so none of them can quietly go stale.
+## The game as modelled
 
-## Where it is
+Seven- or six-handed, 40bb, blinds and ante configurable. Pre-draw an unopened
+pot is raised 3x or folded — no limping and no open-shoving. The only 3-bet is
+all-in, at most two players may flat an open, and a 3-bet shove cannot be
+cold-called. After the draw: b25 / b100 / all-in out of position, b100 / all-in
+in position, with all-in the only raise. Draws are pat, one or two.
 
-- **Cards and dealing** — one deck deals seven hands and their draws, so card
-  removal is correct by construction rather than by bookkeeping.
-- **Hand strength** — a full 2-7 evaluator, with a table that scores every hand
-  in the deck into 5 MB of dense ranks in about a quarter of a second.
-- **The betting tree** — 6,392 nodes pre-draw, 151,588 with the draw and the
-  post-draw street played out. No limping, at most two callers of an open, and
-  no cold-calling a 3-bet; all three are config switches.
-- **The abstraction** — 3,463 pre-draw buckets, derived from what pat, draw-one
-  and draw-two are each worth, plus 251 showdown buckets for after the draw.
-- **The solver** — MCCFR with CFR+ and linear averaging, over the pre-draw tree.
-- **The viewer** — the ranked hand table, served from `public/`.
+Each of those is a deliberate pruning, and together they are what makes the tree
+fit: unpruned it needed 204 GB, pruned it needs under one.
 
-Solving both streets in one run is next: the tree and the buckets for it are
-built, the solver still stops at the draw and lets a rollout finish the hand.
-
-## The three rules that make this game
+## The rules that make this game
 
 All are in the tests, because all are easy to write wrong:
 
 - **The ace is high only.** 5-4-3-2-A is not a straight — it is an ace-high
-  hand, and a bad one. There are nine straights in this game, not ten.
-- **A flush counts against you.** 7-5-4-3-2 of one suit is a flush and loses to
-  every no-pair hand in the deck. The same ranks offsuit are the nuts.
+  hand, and a bad one. Nine straights in this game, not ten.
+- **A flush counts against you.** 7-5-4-3-2 of one suit loses to every no-pair
+  hand in the deck. The same ranks offsuit are the nuts.
 - **Straights count against you too, and that changes which cards you keep.**
   8-5-4-3 makes an eight or better 12 times in 48 and cannot make a straight;
-  7-5-4-3 manages 8 and bricks with any six. The lowest four cards in a hand are
-  often the wrong four.
+  7-5-4-3 manages 8 and bricks with any six.
+- **A four-flush only counts against you if the card you are throwing is the
+  offsuit one.** K-7-5-4-3 with the king in the suit is still drawing one to
+  four of a suit, because the king goes in the muck either way.
