@@ -96,10 +96,19 @@ test('a rollout is zero sum, whatever the deal', () => {
 test('nobody draws a card another player is holding', () => {
   const config = { ...defaultConfig(), players: 7, stopAtDraw: true, nodeLimit: 5e6 };
   const tree = buildTree(config);
-  // The everybody-limped node: seven live hands, so the deck is at its tightest.
-  const node = tree.nodes.find((n) => n.kind === 'draw'
-    && Array.from(n.state.status).every((s) => s !== 1));
-  assert.ok(node, 'expected a draw node with nobody folded');
+  // Whichever draw node keeps the most players in, since that is where the
+  // deck is at its tightest and a repeated card would show up first.
+  let node = null;
+  let most = 0;
+  for (const candidate of tree.nodes) {
+    if (candidate.kind !== 'draw') continue;
+    const live = Array.from(candidate.state.status).filter((s) => s !== 1).length;
+    if (live > most) {
+      most = live;
+      node = candidate;
+    }
+  }
+  assert.ok(node && most >= 3, `expected a multiway draw node, most seen was ${most}`);
 
   const rng = makeRng(2026);
   for (let trial = 0; trial < 200; trial += 1) {
@@ -110,13 +119,15 @@ test('nobody draws a card another player is holding', () => {
     const reserve = deck.subarray(35, 49);
     const { finals } = rollout(node.state, hands, reserve, { startStack: config.stack * BB });
     const seen = new Set();
+    let cards = 0;
+    // A seat that folded never drew, so it has no finished hand to check.
     for (const final of finals) {
+      if (!final) continue;
       assert.equal(final.length, 5);
       for (const card of final) seen.add(card);
+      cards += final.length;
     }
-    // Seven finished five-card hands off one deck cannot share a card.
-    let cards = 0;
-    for (const final of finals) cards += final.length;
+    assert.equal(cards, most * 5, 'every player still in finishes with five cards');
     assert.equal(seen.size, cards, 'a card appeared in two hands');
   }
 });

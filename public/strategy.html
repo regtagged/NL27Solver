@@ -66,6 +66,7 @@
   td.name { font-variant-numeric: tabular-nums; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
   tr.category > td.name { font-weight: 700; }
+  tr.whole > td { background: var(--chip); font-weight: 700; border-bottom: 2px solid var(--line); }
   tr.hand > td.name { color: var(--ink-2); }
   tbody tr:hover { background: var(--chip); }
 
@@ -198,6 +199,23 @@ function renderRange() {
   const head = '<tr><th>Hand</th><th>Combos</th><th>Mix</th>'
     + d.actions.map((a) => `<th>${a.label}</th>`).join('') + '</tr>';
 
+  // What the seat does with everything, which is the number people quote: an
+  // opening frequency. The categories below it are the same figure split up.
+  const whole = new Float64Array(d.actions.length);
+  let allCombos = 0;
+  for (const node of d.tree) {
+    for (let a = 0; a < d.actions.length; a += 1) whole[a] += node.combos * node.mix[a];
+    allCombos += node.combos;
+  }
+  const wholeBar = d.actions.map((a, i) =>
+    `<i style="width:${(whole[i] / allCombos * 100).toFixed(2)}%;background:${colourFor(a.label)}"></i>`).join('');
+  const summary = `<tr class="whole">`
+    + `<td class="name"><span class="twist"></span>Every hand</td>`
+    + `<td class="num">${allCombos.toLocaleString()}</td>`
+    + `<td><span class="bar">${wholeBar}</span></td>`
+    + Array.from(whole, (v) => `<td class="num">${(v / allCombos * 100).toFixed(0)}%</td>`).join('')
+    + `</tr>`;
+
   const body = rows.map(({ id, depth, node }) => {
     const twist = node.children.length ? (state.open.has(id) ? '▾' : '▸') : '';
     const name = node.children.length
@@ -212,7 +230,7 @@ function renderRange() {
       + `<td><span class="bar">${bar}</span></td>${cells}</tr>`;
   }).join('');
 
-  $('range').innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  $('range').innerHTML = `<table><thead>${head}</thead><tbody>${summary}${body}</tbody></table>`;
   for (const button of $('range').querySelectorAll('button[data-row]')) {
     button.onclick = () => {
       const id = button.dataset.row;
@@ -238,11 +256,18 @@ if (!solve.running) {
   state.order = solve.order;
   state.stacks = solve.stacks;
   const c = solve.config;
+  // The dead money is what the ante is really saying, so it is shown as well
+  // as the per-player figure: 0.6bb each is 4.2bb in the middle seven-handed.
+  const posters = c.anteMode === 'button' ? 1 : solve.players;
+  const dead = c.ante ? c.ante * posters : 0;
   const ante = c.ante
-    ? ` · ${c.ante}bb ante ${c.anteMode === 'button' ? '(button)' : '(each)'}`
-    : ' · no ante';
+    ? ` &nbsp;·&nbsp; ante ${c.ante}bb ${c.anteMode === 'button' ? 'button' : 'each'}`
+      + ` <strong>(${dead.toFixed(1)}bb dead)</strong>`
+    : ' &nbsp;·&nbsp; no ante';
+  const pot = (dead + c.smallBlind + c.bigBlind).toFixed(1);
   $('meta').innerHTML = `${solve.players}-handed &nbsp;·&nbsp; <strong>${c.stack}bb</strong>`
     + ` &nbsp;·&nbsp; ${c.smallBlind}/${c.bigBlind}${ante}`
+    + ` &nbsp;·&nbsp; ${pot}bb to win`
     + ` &nbsp;·&nbsp; ${solve.iterations.toLocaleString()} iterations`;
   await load(solve.root);
 }

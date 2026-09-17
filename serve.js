@@ -58,8 +58,8 @@ if (argv.includes('--solve')) {
     stack: Number(flag('stack', 40)),
     smallBlind: Number(flag('sb', 0.5)),
     bigBlind: Number(flag('bb', 1)),
-    ante: Number(flag('ante', 0)),
-    anteMode: flag('ante-mode', 'none'),
+    ante: Number(flag('ante', 0.6)),
+    anteMode: flag('ante-mode', 'each'),
     nodeLimit: 2e7,
   };
   const { players } = config;

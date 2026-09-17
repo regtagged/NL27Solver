@@ -21,7 +21,8 @@ test('seats are named from the button backwards, with UTG first to act', () => {
 });
 
 test('blinds come out of stacks, and the big blind is the bet to match', () => {
-  const config = defaultConfig();
+  // No ante here, so the blinds are the only thing taken.
+  const config = { ...defaultConfig(), ante: 0, anteMode: 'none' };
   const state = initialState(config);
   assert.equal(state.committed[0], 50);
   assert.equal(state.committed[1], 100);
@@ -32,15 +33,19 @@ test('blinds come out of stacks, and the big blind is the bet to match', () => {
   assert.equal(potOf(state), 150);
 });
 
-test('an opener raises or folds, and cannot limp', () => {
+test('an opener raises or folds, and cannot limp or shove', () => {
   const config = defaultConfig();
+  assert.deepEqual(labels(initialState(config), config), ['fold', 'raise 3x']);
+});
+
+test('an opening shove comes back when it is switched on', () => {
+  const config = { ...defaultConfig(), allowOpenShove: true };
   assert.deepEqual(labels(initialState(config), config), ['fold', 'raise 3x', 'all-in']);
 });
 
 test('limping comes back when it is switched on', () => {
   const config = { ...defaultConfig(), allowLimp: true };
-  assert.deepEqual(labels(initialState(config), config),
-    ['fold', 'limp', 'raise 3x', 'all-in']);
+  assert.deepEqual(labels(initialState(config), config), ['fold', 'limp', 'raise 3x']);
 });
 
 test('the open grows by a big blind for every limper already in', () => {
@@ -59,7 +64,7 @@ test('the big blind gets an option when the pot is limped to it', () => {
   for (let i = 0; i < 5; i += 1) state = take(state, config, 'fold');
   state = take(state, config, 'limp'); // SB completes
   assert.equal(state.toAct, 1, 'the big blind is to act');
-  assert.deepEqual(labels(state, config), ['check', 'raise 3x', 'all-in']);
+  assert.deepEqual(labels(state, config), ['check', 'raise 3x']);
 });
 
 test('facing a raise, the only raise back is all-in', () => {
@@ -93,14 +98,14 @@ test('a 3-bet shove cannot be cold-called, but the opener may call it', () => {
 });
 
 test('an opening shove is not a 3-bet, so calling it is not a cold call', () => {
-  const config = defaultConfig();
+  const config = { ...defaultConfig(), allowOpenShove: true };
   let state = initialState(config);
   state = take(state, config, 'all-in');
   assert.deepEqual(labels(state, config), ['fold', 'call']);
 });
 
 test('a raise has to raise: an opening shove cannot be re-raised to 3bb', () => {
-  const config = defaultConfig();
+  const config = { ...defaultConfig(), allowOpenShove: true };
   let state = initialState(config);
   state = take(state, config, 'all-in');
   assert.ok(!labels(state, config).includes('raise 3x'),
@@ -169,6 +174,16 @@ test('a fold-out leaves exactly one player who has not folded', () => {
   }
 });
 
+test('the default game antes three fifths of a blind from everybody', () => {
+  const config = defaultConfig();
+  const state = initialState(config);
+  assert.equal(config.ante, 0.6);
+  assert.equal(config.anteMode, 'each');
+  // Seven-handed that is 4.2bb dead before a card is dealt, and 5.7bb to win.
+  assert.equal(state.dead, 7 * 60);
+  assert.equal(potOf(state), 7 * 60 + 150);
+});
+
 test('an ante is dead money and changes nobody what they owe', () => {
   const plain = defaultConfig();
   const anted = { ...plain, ante: 0.125, anteMode: 'each' };
@@ -189,7 +204,7 @@ test('a button ante is posted by the button alone', () => {
 });
 
 test('all-in is capped at the stack, and empties it', () => {
-  const config = defaultConfig();
+  const config = { ...defaultConfig(), allowOpenShove: true, ante: 0, anteMode: 'none' };
   let state = initialState(config);
   state = take(state, config, 'all-in');
   assert.equal(state.stack[2], 0);
