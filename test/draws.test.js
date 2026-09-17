@@ -73,8 +73,8 @@ test('the benchmark ladder runs from the eight upward', () => {
 test('a keep that cannot be made is refused rather than guessed at', () => {
   assert.equal(bestKeep(at('72'), 4), null, 'two ranks cannot fill a four-card keep');
   assert.equal(bestKeep(at('72'), 3), null);
-  // Three cards drawn is not on offer, so a two-card keep is a programming
-  // error rather than a strategy - and scoring one would quietly return a
-  // number for a draw it never enumerated.
-  assert.throws(() => bestKeep(at('7532'), 2), /four cards or three/);
+  // Keeping five is standing pat, which is the hand rather than a subset, so
+  // asking for it is a programming error rather than a strategy.
+  assert.throws(() => bestKeep(at('75432'), 5), /nought to four/);
+  assert.deepEqual(bestKeep(at('7532'), 0), [], 'keeping nothing is drawing five');
 });

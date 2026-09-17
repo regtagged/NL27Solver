@@ -17,32 +17,43 @@ test('the classes cover the deck exactly once', () => {
 
 test('a hand is split by whether the cards it keeps are all one suit', () => {
   const classes = handClasses();
-  const find = (label) => classes.find((entry) => classLabel(entry) === label);
+  const rowsFor = (ranks) => classes.filter((e) => classLabel(e).replace(/s$/, '') === ranks);
 
-  // 7-5-4-3-2 stands pat, so the keep is all five cards and the split is the
-  // flush: 4 of the 1,024 arrangements.
-  assert.equal(find('75432').combos, 1020);
-  assert.equal(find('75432s').combos, 4);
-  assert.equal(find('75432').option, PAT);
-  assert.equal(find('75432s').option, DRAW_ONE, 'a flush cannot stand pat');
+  // 7-5-4-3-2 stands pat, so its keep is all five cards and the split is the
+  // flush: 4 of the 1,024 suit arrangements, and a flush cannot stand pat.
+  const nuts = rowsFor('75432');
+  assert.equal(nuts.find((e) => !e.monotone).combos, 1020);
+  assert.equal(nuts.find((e) => !e.monotone).option, PAT);
+  assert.equal(nuts.find((e) => e.monotone).combos, 4);
+  assert.notEqual(nuts.find((e) => e.monotone).option, PAT, 'a flush cannot stand pat');
 
-  // K-7-5-4-3 throws the king, so the keep is four cards and the split is four
-  // suits for the keep times four for the discard.
-  assert.equal(find('K7543').combos, 1008);
-  assert.equal(find('K7543s').combos, 16);
-
-  // Both hands account for the same 1,024 arrangements either way.
-  assert.equal(find('75432').combos + find('75432s').combos, 1024);
-  assert.equal(find('K7543').combos + find('K7543s').combos, 1024);
+  // However a rank set is split, its rows account for every arrangement of it.
+  for (const ranks of ['75432', 'K7543', 'AKQJ6']) {
+    const total = rowsFor(ranks).reduce((sum, e) => sum + e.combos, 0);
+    assert.equal(total, 1024, `${ranks} should cover all 1,024 arrangements`);
+  }
 });
 
 test('a suited keep is worth markedly less than the same ranks spread out', () => {
   const classes = handClasses();
-  const find = (label) => classes.find((entry) => classLabel(entry) === label);
-  const plain = equityOf(find('K7543').cards, 1, 6000, makeRng(31));
-  const suited = equityOf(find('K7543s').cards, 1, 6000, makeRng(31));
+  const rows = classes.filter((e) => classLabel(e).replace(/s$/, '') === 'K7543');
+  // The bulk of the arrangements against the ones stuck in a suit - picked by
+  // size rather than by position, because the split is not always two rows.
+  const plainRow = rows.reduce((a, b) => (b.combos > a.combos ? b : a));
+  const suitedRow = rows.find((e) => e.monotone);
+  const plain = equityOf(plainRow.cards, 1, 6000, makeRng(31));
+  const suited = equityOf(suitedRow.cards, 1, 6000, makeRng(31));
   assert.ok(plain - suited > 0.05,
-    `drawing one to four of a suit should cost real equity: ${plain.toFixed(3)} vs ${suited.toFixed(3)}`);
+    `four of a suit should cost real equity: ${plain.toFixed(3)} vs ${suited.toFixed(3)}`);
+});
+
+test('a hand with no draw worth taking throws everything', () => {
+  const classes = handClasses();
+  const find = (label) => classes.find((entry) => classLabel(entry) === label);
+  // Three kings and two queens: no one-card or two-card draw is worth anything,
+  // so it is not pat and it is not drawing one - it throws all five.
+  assert.equal(find('KKKQQ').option, 5);
+  assert.equal(find('KKKQQ').combos, 24, '4 ways to pick three kings, 6 for two queens');
 });
 
 test('the nuts cannot lose, and a flush of the same ranks is not the nuts', () => {

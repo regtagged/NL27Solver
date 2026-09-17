@@ -255,6 +255,9 @@
         <option value="0">Pat</option>
         <option value="1">One</option>
         <option value="2">Two</option>
+        <option value="3">Three</option>
+        <option value="4">Four</option>
+        <option value="5">Five</option>
       </select>
     </div>
     <div class="field">
@@ -359,7 +362,7 @@ function renderTable(rows) {
     const pips = row.cards.map((card, i) => pip(card, row.kept[i], fade)).join('');
     const eq = equityOf(row);
     const colour = eq >= 0.6 ? 'var(--good)' : eq >= 0.35 ? 'var(--ink-2)' : 'var(--bad)';
-    const label = ['Pat', 'D1', 'D2'][row.draw];
+    const label = row.drawLabel;
     return `<tr>
       <td class="num">${pct(row.cum, 1)}</td>
       <td><span class="hand">${pips}</span></td>

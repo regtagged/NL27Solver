@@ -13,8 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { makeRng, RANKS, rankOf, formatCard } from '../lib/cards.js';
 import { score, categoryOf, rank27, STRAIGHT } from '../lib/eval27.js';
-import { handClasses, classLabel } from '../lib/ranking.js';
-import { analyse, DRAW_LABELS, PAT, DRAW_ONE } from '../lib/abstraction.js';
+import { handClasses, classLabel, DRAW_LABELS, KEEP_SIZE } from '../lib/ranking.js';
 import { equityOf } from '../lib/equity.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -45,9 +44,7 @@ console.log(`${classes.length.toLocaleString()} rows found in ${((Date.now() - s
 const rows = [];
 for (let i = 0; i < classes.length; i += 1) {
   const entry = classes[i];
-  const info = analyse(entry.cards);
-  const keepRanks = entry.option === PAT ? null
-    : (entry.option === DRAW_ONE ? info.keep4 : info.keep3);
+  const keepRanks = entry.keep;
 
   // Which of the five cards survive the draw, in the order they are displayed.
   const shown = [...entry.cards].sort((x, y) => rankOf(y) - rankOf(x));
@@ -68,7 +65,10 @@ for (let i = 0; i < classes.length; i += 1) {
     suited: entry.monotone,
     combos: entry.combos,
     draw: entry.option,
-    keep: keepRanks ? keepRanks.map((rank) => RANKS[rank]).reverse().join('') : null,
+    drawLabel: DRAW_LABELS[entry.option],
+    drawn: 5 - KEEP_SIZE[entry.option],
+    keep: keepRanks && keepRanks.length
+      ? keepRanks.map((rank) => RANKS[rank]).reverse().join('') : null,
     straightOuts: straightOuts(entry.cards, shown.filter((_, k) => kept[k])),
     rank: rank27(entry.cards),
     // Common random numbers: every hand faces the same sequence of shuffles.
@@ -114,6 +114,6 @@ for (const want of ['75432', 'K7543']) {
   for (const row of rows.filter((r) => r.hand.replace(/s$/, '') === want)) {
     console.log(`  ${row.hand.padEnd(7)} ${row.cards.join(' ').padEnd(18)}`
       + `${(row.hu * 100).toFixed(1).padStart(6)}%  ${row.combos.toLocaleString().padStart(5)} combos  `
-      + `${DRAW_LABELS[row.draw]}`);
+      + row.drawLabel);
   }
 }
