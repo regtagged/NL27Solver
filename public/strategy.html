@@ -197,15 +197,29 @@ function renderRange() {
   const d = state.data;
   const rows = rowsOf(d.tree);
   const head = '<tr><th>Hand</th><th>Combos</th><th>Mix</th>'
-    + d.actions.map((a) => `<th>${a.label}</th>`).join('') + '</tr>';
+    + d.actions.map((a) => `<th>${a.label}</th>`).join('')
+    + '<th title="Big blinds per 100 hands, given this hand at this decision">EV bb/100</th></tr>';
+
+  // Chips are hundredths of a big blind, so the number is already bb/100.
+  const money = (ev) => {
+    if (ev === null || ev === undefined) return '<td class="num ev">—</td>';
+    const tone = ev > 0.5 ? 'var(--call)' : ev < -0.5 ? 'var(--allin)' : 'var(--ink-3)';
+    return `<td class="num ev" style="color:${tone}">${ev > 0 ? '+' : ''}${ev.toFixed(1)}</td>`;
+  };
 
   // What the seat does with everything, which is the number people quote: an
   // opening frequency. The categories below it are the same figure split up.
   const whole = new Float64Array(d.actions.length);
   let allCombos = 0;
+  let wholeEv = 0;
+  let pricedCombos = 0;
   for (const node of d.tree) {
     for (let a = 0; a < d.actions.length; a += 1) whole[a] += node.combos * node.mix[a];
     allCombos += node.combos;
+    if (node.ev !== null) {
+      wholeEv += node.combos * node.ev;
+      pricedCombos += node.combos;
+    }
   }
   const wholeBar = d.actions.map((a, i) =>
     `<i style="width:${(whole[i] / allCombos * 100).toFixed(2)}%;background:${colourFor(a.label)}"></i>`).join('');
@@ -214,6 +228,7 @@ function renderRange() {
     + `<td class="num">${allCombos.toLocaleString()}</td>`
     + `<td><span class="bar">${wholeBar}</span></td>`
     + Array.from(whole, (v) => `<td class="num">${(v / allCombos * 100).toFixed(0)}%</td>`).join('')
+    + money(pricedCombos ? wholeEv / pricedCombos : null)
     + `</tr>`;
 
   const body = rows.map(({ id, depth, node }) => {
@@ -227,7 +242,7 @@ function renderRange() {
     return `<tr class="${node.kind}">`
       + `<td class="name" style="padding-left:${10 + depth * 18}px">${name}</td>`
       + `<td class="num">${node.combos.toLocaleString()}</td>`
-      + `<td><span class="bar">${bar}</span></td>${cells}</tr>`;
+      + `<td><span class="bar">${bar}</span></td>${cells}${money(node.ev)}</tr>`;
   }).join('');
 
   $('range').innerHTML = `<table><thead>${head}</thead><tbody>${summary}${body}</tbody></table>`;
