@@ -1,5 +1,5 @@
 node_modules/
-solves/
+solves/*.bin
 data/ranked.json
 *.log
 .DS_Store

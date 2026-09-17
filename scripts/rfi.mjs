@@ -80,22 +80,44 @@ console.log(`\n${((Date.now() - started) / 1000).toFixed(0)}s`);
 
 // Snows: hands that could draw and choose not to, because a pat hand can bet.
 if (joint) {
-  const drawNode = solver.nodes.find((node) => node.kind === 'decision' && node.street === DRAWING);
+  // The draw a hand almost never reaches says nothing - its information set is
+  // still sitting on the uniform strategy it started with. So the node with the
+  // most traffic is the one worth reading, and the visit count is printed
+  // beside every line so a number can be told from a starting position.
+  let drawNode = null;
+  let busiest = 0;
+  for (const node of solver.nodes) {
+    if (node.kind !== 'decision' || node.street !== DRAWING) continue;
+    const hits = solver.evHits[node.id];
+    if (!hits) continue;
+    let total = 0;
+    for (let i = 0; i < hits.length; i += 1) total += hits[i];
+    if (total > busiest) {
+      busiest = total;
+      drawNode = node;
+    }
+  }
+
   if (drawNode) {
-    console.log(`\nAt the draw (${solver.names[drawNode.seat]}), stand-pat frequency:`);
+    console.log(`\nAt the busiest draw (${solver.names[drawNode.seat]}, `
+      + `${Math.round(busiest).toLocaleString()} visits):`);
+    const labels = drawNode.actions.map((a) => a.label);
+    console.log(`  ${'hand'.padEnd(22)}${labels.map((l) => l.padStart(7)).join('')}    visits`);
     const candidates = [
-      ['22558 two pair', '2c2d5h5s8c'],
-      ['77552 two pair', '7c7d5h5s2c'],
-      ['33328 trips', '3c3d3h2s8c'],
+      ['22558 low two pair', '2c2d5h5s8c'],
+      ['33328 low trips', '3c3d3h2s8c'],
+      ['44553 low two pair', '4c4d5h5s3c'],
       ['86432 a made eight', '8c6d4h3s2c'],
-      ['KQJ94 nothing', 'Kc Qd Jh 9s 4c'],
+      ['J5432 convertible', 'Jc5d4h3s2c'],
+      ['KQJ94 no blockers', 'Kc Qd Jh 9s 4c'],
     ];
     for (const [label, text] of candidates) {
       const bucket = solver.bucketTable[handIndex(parseHand(text))];
       const mix = solver.strategyAt(drawNode.id, bucket);
-      const labels = drawNode.actions.map((a) => a.label);
-      console.log(`  ${label.padEnd(20)}`
-        + labels.map((l, i) => `${l} ${(mix[i] * 100).toFixed(0)}%`).join('  '));
+      const hits = solver.evHits[drawNode.id]?.[bucket] ?? 0;
+      console.log(`  ${label.padEnd(22)}`
+        + mix.map((v) => `${(v * 100).toFixed(0)}%`.padStart(7)).join('')
+        + `    ${Math.round(hits).toLocaleString()}`);
     }
   }
 }

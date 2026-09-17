@@ -45,6 +45,8 @@
   .seat.is-acting { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
   .who { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
   .pos { font-weight: 700; font-size: 13px; }
+  button.pos { border: 0; background: none; color: var(--ink); cursor: pointer; padding: 0; font-family: inherit; }
+  button.pos:hover { color: var(--accent); text-decoration: underline; }
   .bb { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
   .lines { display: flex; flex-direction: column; gap: 3px; }
   .lines button, .lines span {
@@ -147,6 +149,7 @@ function renderSeats() {
   $('seats').innerHTML = order.map((seat) => {
     const acting = seat === d.seat;
     const did = taken.get(seat);
+    const jump = d.jumps[seat];
     let lines;
     if (acting) {
       lines = d.actions.map((action) => action.child >= 0
@@ -154,13 +157,25 @@ function renderSeats() {
         : `<span>${action.label}</span>`);
     } else if (did) {
       lines = [`<button class="taken" data-node="${did.at}">${did.label}</button>`];
-    } else if (d.jumps[seat] >= 0) {
-      lines = [`<button class="ahead" data-node="${d.jumps[seat]}">to act →</button>`];
+    } else if (jump && jump.node >= 0) {
+      // Its own actions, from where the line would reach it if everyone
+      // between folded - so a whole seat is one click away, not two.
+      lines = jump.actions.map((action) => action.child >= 0
+        ? `<button class="ahead" data-node="${action.child}"`
+          + ` style="border-left:3px solid ${colourFor(action.label)}">${action.label}</button>`
+        : `<span>${action.label}</span>`);
     } else {
       lines = ['<span>—</span>'];
     }
+
+    // The seat's name goes to the seat's own decision, for looking at its range
+    // rather than at what follows one of its actions.
+    const name = (jump && jump.node >= 0 && !acting)
+      ? `<button class="pos" data-node="${jump.node}" title="This seat's range here">${seatName(seat)}</button>`
+      : `<span class="pos">${seatName(seat)}</span>`;
+
     return `<div class="seat${acting ? ' is-acting' : ''}">`
-      + `<div class="who"><span class="pos">${seatName(seat)}</span>`
+      + `<div class="who">${name}`
       + `<span class="bb">${state.stacks?.[seat] ?? ''}bb</span></div>`
       + `<div class="lines">${lines.join('')}</div></div>`;
   }).join('');
@@ -198,13 +213,22 @@ function renderRange() {
   const rows = rowsOf(d.tree);
   const head = '<tr><th>Hand</th><th>Combos</th><th>Mix</th>'
     + d.actions.map((a) => `<th>${a.label}</th>`).join('')
-    + '<th title="Big blinds per 100 hands, given this hand at this decision">EV bb/100</th></tr>';
+    + '<th title="Big blinds won per hand, holding this and reaching this decision">EV (bb)</th></tr>';
 
-  // Chips are hundredths of a big blind, so the number is already bb/100.
+  /**
+   * Chips are hundredths of a big blind, so this divides by a hundred.
+   *
+   * Big blinds, not big blinds per hundred hands. A win rate is a property of a
+   * strategy over many hands; what one hand is worth is a property of the hand,
+   * and quoting a pat seven at "+2,103 bb/100" is arithmetically true and
+   * useless. The range's figure in the top row is the one that means a win
+   * rate, and it is a hundred times the number shown there.
+   */
   const money = (ev) => {
     if (ev === null || ev === undefined) return '<td class="num ev">—</td>';
-    const tone = ev > 0.5 ? 'var(--call)' : ev < -0.5 ? 'var(--allin)' : 'var(--ink-3)';
-    return `<td class="num ev" style="color:${tone}">${ev > 0 ? '+' : ''}${ev.toFixed(1)}</td>`;
+    const bb = ev / 100;
+    const tone = bb > 0.05 ? 'var(--call)' : bb < -0.05 ? 'var(--allin)' : 'var(--ink-3)';
+    return `<td class="num ev" style="color:${tone}">${bb > 0 ? '+' : ''}${bb.toFixed(2)}</td>`;
   };
 
   // What the seat does with everything, which is the number people quote: an

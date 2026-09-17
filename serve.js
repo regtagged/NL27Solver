@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { Solver } from './lib/solve.js';
 import { indexNodes, strategyTree, foldRoundTo } from './lib/browse.js';
 import { positionNames, preDrawOrder } from './lib/tree.js';
+import { save, load, solveKey } from './lib/checkpoint.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
@@ -68,8 +69,22 @@ if (argv.includes('--solve')) {
     + `${config.ante ? `, ante ${config.ante} (${config.anteMode})` : ''}, `
     + `${iterations.toLocaleString()} iterations…\n`);
   const started = Date.now();
-  const solver = new Solver({ config, abstraction: 'coarse' });
-  solver.run(iterations);
+  const joint = argv.includes('--joint');
+  const solver = new Solver({ config, abstraction: 'coarse', joint });
+
+  // A solve is minutes of work and the answer never changes, so it is read back
+  // rather than paid for again. `--fresh` forces one, for when the question is
+  // whether the solver has changed rather than what it says.
+  const file = resolve(here, 'solves', solveKey(config, joint, iterations));
+  const loaded = argv.includes('--fresh') ? false : load(solver, file);
+  if (loaded) {
+    console.log(`  loaded ${solveKey(config, joint, iterations)}`
+      + ` (solved ${new Date(loaded.built).toLocaleString()})`);
+  } else {
+    solver.run(iterations);
+    const written = save(solver, file);
+    console.log(`  solved and stored ${(written.bytes / 1024 / 1024).toFixed(0)} MB`);
+  }
   const rows = JSON.parse(readFileSync(dataFile)).rows;
   solve = {
     solver,
@@ -129,8 +144,20 @@ const server = createServer(async (request, response) => {
         label,
         child: entry?.actions[i]?.child ?? -1,
       })),
-      // Where a seat's own decision lives from here, if everyone between folds.
-      jumps: solve.names.map((_, seat) => foldRoundTo(solve.solver.tree, id, seat)),
+      // A seat not yet in the hand is offered its own actions, not a way to
+      // get to them: the question is almost always "and then what", so landing
+      // on what follows is one click rather than two.
+      jumps: solve.names.map((_, seat) => {
+        const at = foldRoundTo(solve.solver.tree, id, seat);
+        if (at < 0) return { node: -1, actions: [] };
+        return {
+          node: at,
+          actions: solve.solver.nodes[at].actions.map((action) => ({
+            label: action.label,
+            child: action.child,
+          })),
+        };
+      }),
       tree: answer.tree,
     });
   }
