@@ -1,0 +1,101 @@
+/**
+ * Raise-first-in by position, which is the number a player can check by eye.
+ *
+ *   node --max-old-space-size=8000 scripts/rfi.mjs [--players 7] [--joint] [--to 20000000]
+ *
+ * Also reports what snow candidates do at the draw - hands with no low to make
+ * and no draw worth taking, which stand pat only because a pat hand that bets
+ * wins pots a broken one cannot.
+ */
+
+import { parseHand, RANKS } from '../lib/cards.js';
+import { handIndex } from '../lib/eval27.js';
+import { DRAWING, PRE_DRAW } from '../lib/tree.js';
+import { Solver } from '../lib/solve.js';
+
+const argv = process.argv.slice(2);
+const flag = (name, fallback) => {
+  const at = argv.indexOf(`--${name}`);
+  return at >= 0 && at + 1 < argv.length ? argv[at + 1] : fallback;
+};
+
+const config = {
+  players: Number(flag('players', 7)),
+  stack: Number(flag('stack', 40)),
+  smallBlind: Number(flag('sb', 0.5)),
+  bigBlind: Number(flag('bb', 1)),
+  ante: Number(flag('ante', 0.6)),
+  anteMode: flag('ante-mode', 'each'),
+  nodeLimit: 5e7,
+};
+const joint = argv.includes('--joint');
+const target = Number(flag('to', 20000000));
+
+const solver = new Solver({ config, joint, abstraction: 'coarse', seed: 20260917 });
+
+// How many hands sit in each bucket, so a frequency is weighted by the deck.
+const weights = new Float64Array(solver.bucketCount);
+for (let i = 0; i < solver.bucketTable.length; i += 1) weights[solver.bucketTable[i]] += 1;
+const allHands = solver.bucketTable.length;
+
+const dead = config.ante * (config.anteMode === 'button' ? 1 : config.players);
+console.log(`${config.players}-handed ${config.stack}bb, blinds ${config.smallBlind}/${config.bigBlind}`
+  + `, ante ${config.ante} ${config.anteMode} (${dead.toFixed(1)}bb dead, `
+  + `${(dead + config.smallBlind + config.bigBlind).toFixed(1)}bb to win)`);
+console.log(`${joint ? 'joint' : 'pre-draw only'}: ${solver.nodes.length.toLocaleString()} nodes, `
+  + `${solver.bucketCount} buckets${joint ? `, ${solver.showdownCount} showdown` : ''}\n`);
+
+/** The chance this seat puts money in, folded round to it. */
+function rfi(seat) {
+  const id = solver.openingNode(seat);
+  if (id < 0) return null;
+  const node = solver.nodes[id];
+  const fold = node.actions.findIndex((action) => action.kind === 'fold');
+  let raising = 0;
+  for (let bucket = 0; bucket < solver.bucketCount; bucket += 1) {
+    const mix = solver.strategyAt(id, bucket);
+    let plays = 0;
+    for (let a = 0; a < mix.length; a += 1) if (a !== fold) plays += mix[a];
+    raising += weights[bucket] * plays;
+  }
+  return raising / allHands;
+}
+
+const marks = [2e6, 5e6, 10e6, target].filter((m, i, all) => all.indexOf(m) === i && m <= target);
+const seats = solver.names.map((_, seat) => seat).filter((seat) => solver.openingNode(seat) >= 0);
+
+console.log('iterations   ' + seats.map((s) => solver.names[s].padStart(6)).join(''));
+let done = 0;
+const started = Date.now();
+for (const mark of marks) {
+  solver.run(mark - done);
+  done = mark;
+  const line = seats.map((seat) => {
+    const value = rfi(seat);
+    return `${(value * 100).toFixed(0)}%`.padStart(6);
+  }).join('');
+  console.log(`${(done / 1e6).toFixed(0)}M`.padEnd(13) + line);
+}
+console.log(`\n${((Date.now() - started) / 1000).toFixed(0)}s`);
+
+// Snows: hands that could draw and choose not to, because a pat hand can bet.
+if (joint) {
+  const drawNode = solver.nodes.find((node) => node.kind === 'decision' && node.street === DRAWING);
+  if (drawNode) {
+    console.log(`\nAt the draw (${solver.names[drawNode.seat]}), stand-pat frequency:`);
+    const candidates = [
+      ['22558 two pair', '2c2d5h5s8c'],
+      ['77552 two pair', '7c7d5h5s2c'],
+      ['33328 trips', '3c3d3h2s8c'],
+      ['86432 a made eight', '8c6d4h3s2c'],
+      ['KQJ94 nothing', 'Kc Qd Jh 9s 4c'],
+    ];
+    for (const [label, text] of candidates) {
+      const bucket = solver.bucketTable[handIndex(parseHand(text))];
+      const mix = solver.strategyAt(drawNode.id, bucket);
+      const labels = drawNode.actions.map((a) => a.label);
+      console.log(`  ${label.padEnd(20)}`
+        + labels.map((l, i) => `${l} ${(mix[i] * 100).toFixed(0)}%`).join('  '));
+    }
+  }
+}
