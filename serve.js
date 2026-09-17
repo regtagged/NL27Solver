@@ -68,7 +68,7 @@ if (argv.includes('--solve')) {
     + `${config.ante ? `, ante ${config.ante} (${config.anteMode})` : ''}, `
     + `${iterations.toLocaleString()} iterations…\n`);
   const started = Date.now();
-  const solver = new Solver({ config });
+  const solver = new Solver({ config, abstraction: 'coarse' });
   solver.run(iterations);
   const rows = JSON.parse(readFileSync(dataFile)).rows;
   solve = {

@@ -38,10 +38,18 @@ const WATCH = [
   ['KQJ9 trash', 'AcKdQhJs9c'],
 ];
 
-const solver = new Solver({ config, seed: 20260916 });
-const table = buckets(solver.limits).table;
+const solver = new Solver({
+  config,
+  seed: 20260916,
+  abstraction: argv.includes('--fine') ? 'fine' : 'coarse',
+});
+const table = solver.bucketTable;
 const watched = WATCH.map(([label, text]) => [label, table[handIndex(parseHand(text))]]);
-const { descriptors } = buckets(solver.limits);
+
+// How many hands sit in each bucket, so "every hand" is weighted by the deck
+// rather than by the buckets - which works whichever abstraction is in use.
+const weights = new Float64Array(solver.bucketCount);
+for (let i = 0; i < table.length; i += 1) weights[table[i]] += 1;
 
 console.log(`${config.players}-handed ${config.stack}bb, blinds ${config.smallBlind}/${config.bigBlind}`
   + `${config.ante ? `, ante ${config.ante} ${config.anteMode}` : ''}`);
@@ -69,7 +77,7 @@ for (const mark of [1e6, 3e6, 8e6, 15e6, 25e6, target]) {
   const totals = new Float64Array(labels.length);
   let hands = 0;
   for (let bucket = 0; bucket < solver.bucketCount; bucket += 1) {
-    const weight = descriptors[bucket].hands;
+    const weight = weights[bucket];
     const mix = solver.strategyAt(solver.tree.root, bucket);
     for (let a = 0; a < labels.length; a += 1) totals[a] += weight * mix[a];
     hands += weight;
