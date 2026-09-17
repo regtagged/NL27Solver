@@ -89,13 +89,30 @@ asks the solver's table which bucket it is in.
 4. **Convertibility is modelled but unverified.** J-5-4-3-2 can pat or draw one
    depending on what the seats before it did; the tree makes draws public and in
    order, so the solve *can* see it. Whether it does has not been measured.
-5. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
+5. **Ten million iterations is not enough for the rarest buckets.** A bucket
+   labelled with a low second card - `Pat J5` is J-5-4-3-2 and nothing else -
+   holds one rank pattern, 1,020 hands, 0.039% of the deck. Six-handed at 10M
+   the button faces it about 300 times, and 300 samples do not resolve a
+   decision. J-5-4-3-2 read 78% / 100% / 75% / 100% across four solves; at 100M,
+   with 3,124 visits, it reads 100% and Q-5-4-3-2 settles at 99% after bouncing
+   16 / 0 / 43 / 77. Visits scale linearly with iterations, so this is a price
+   rather than a puzzle: **70 minutes a sim instead of 8, for the best hands in
+   the game to be right.** Exploitability will not tell you - at 0.04% of the
+   range these hands cost nothing to get wrong, which is exactly why the solver
+   leaves them and exactly why a reader notices.
+
+   Not everything thin is starved. The jack-high *draws* get 5,000 to 24,000
+   visits and are still unordered, because they are worth what folding is worth:
+   -26 to -30 bb/100 against -25 for folding. That is indifference, not noise,
+   and no amount of solving will order a tie.
+6. **`setScoreTable` is process-global.** Calibrating the ranking changes what a
    finished hand is worth for anything else in the same process. The draw policy
    cache key now includes whether calibration has happened, which closes the
    trap that existed, but the coupling is still there and wants a parameter
    rather than module state.
-6. **No 6-max / 7-max switching in the viewer.** One solve per server start.
-   Both configurations store fine; the UI just cannot swap between them.
+7. **No 6-max / 7-max switching in the viewer.** `--also` switches between
+   sizings of one game, but not between player counts: every view in a server
+   has to have the same seats.
 
 ## How to trust a number
 
