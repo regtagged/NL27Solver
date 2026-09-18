@@ -385,3 +385,9 @@ between a first pass that is large and one that is twice as large.
 5. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
    more than CFR+ to DCFR.
 6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
+7. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
+   hands. Shelved on purpose rather than forgotten: the 1,092 values already
+   exist in `lib/badugi.js` with their labels and combination counts, so this is
+   a page over data that is already computed, and the solve is worth having
+   first. Badugi is easier to rank than 2-7 - size then lowness, with no draw
+   policy to agree on - so most of `lib/ranking.js` has no counterpart here.
