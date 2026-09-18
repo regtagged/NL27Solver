@@ -3,3 +3,4 @@ solves/
 data/ranked.json
 *.log
 .DS_Store
+data/badugi-*.json
