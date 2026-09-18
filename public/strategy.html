@@ -28,6 +28,21 @@
     margin: 0; background: var(--bg); color: var(--ink);
     font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
+
+  /* One nav on every page, so the three views are one tool rather than three.
+     The current page is marked rather than linked, which is what says where
+     you are without a second glance. */
+  .views-nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .views-nav a, .views-nav span {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink-2); background: var(--raised);
+    white-space: nowrap; margin-left: 0;
+  }
+  .views-nav a:hover { border-color: var(--accent); color: var(--ink); }
+  .views-nav [aria-current="page"] {
+    border-color: var(--accent); color: var(--ink); font-weight: 600;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
   header { padding: 18px 24px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
   .eyebrow { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
   h1 { margin: 2px 0 0; font-size: 20px; text-transform: uppercase; letter-spacing: .01em; }
@@ -123,7 +138,11 @@
     <h1 id="title">2-7 Lowball (Single Draw)</h1>
   </div>
   <div class="eyebrow" id="meta"></div>
-  <a href="/">Ranked hands →</a>
+  <nav class="views-nav">
+    <a href="/">Ranked hands</a>
+    <span aria-current="page">2-7 pre-draw</span>
+    <a href="/pushfold.html">Hold'em push-fold</a>
+  </nav>
 </header>
 
 <main>

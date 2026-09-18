@@ -31,6 +31,21 @@
     font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
 
+
+  /* One nav on every page, so the three views are one tool rather than three.
+     The current page is marked rather than linked, which is what says where
+     you are without a second glance. */
+  .views-nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .views-nav a, .views-nav span {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink-2); background: var(--raised);
+    white-space: nowrap; margin-left: 0;
+  }
+  .views-nav a:hover { border-color: var(--accent); color: var(--ink); }
+  .views-nav [aria-current="page"] {
+    border-color: var(--accent); color: var(--ink); font-weight: 600;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
   header {
     display: flex;
     align-items: flex-end;
@@ -182,7 +197,11 @@
       <button data-v="all" aria-pressed="false">Plain</button>
     </div>
   </div>
-  <a href="/strategy.html" style="margin-left:auto;color:var(--accent);font-size:13px">Pre-draw strategy →</a>
+  <nav class="views-nav">
+    <span aria-current="page">Ranked hands</span>
+    <a href="/strategy.html">2-7 pre-draw</a>
+    <a href="/pushfold.html">Hold'em push-fold</a>
+  </nav>
 </header>
 
 <main>

@@ -22,6 +22,7 @@ import { save, load, solveKey } from './lib/checkpoint.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
 const dataFile = resolve(here, 'data', 'ranked.json');
+const pushFoldFile = resolve(here, 'data', 'pushfold.json');
 
 const argv = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -269,6 +270,18 @@ const server = createServer(async (request, response) => {
       }),
       tree: answer.tree,
     });
+  }
+
+  /**
+   * The push-fold ranges, served as they were solved.
+   *
+   * A different game and a different shape: 169 hands rather than 7,462 rows,
+   * and no tree to walk, so it is a file rather than a solver held in memory.
+   */
+  if (url.pathname === '/api/pushfold') {
+    if (!existsSync(pushFoldFile)) return json(response, { running: false });
+    const body = JSON.parse(readFileSync(pushFoldFile));
+    return json(response, { running: true, ...body });
   }
 
   if (url.pathname === '/api/ranked') {

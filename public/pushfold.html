@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Push-fold — No Limit Hold'em</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #131316;
+    --panel: #1b1b1f;
+    --raised: #232328;
+    --line: rgba(255, 255, 255, 0.13);
+    --ink: #eeeef2;
+    --ink-2: #b4b4bd;
+    --ink-3: #81818b;
+    --chip: rgba(255, 255, 255, 0.07);
+    --accent: #5b8ff9;
+    --shove: #c9433b;
+    --call: #40ac68;
+    --fold: #2a2a30;
+    --fold-line: #6c727a;
+    --loss: #d6584f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* One nav on every page, so the three views are one tool rather than three.
+     The current page is marked rather than linked, which is what says where
+     you are without a second glance. */
+  .views-nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .views-nav a, .views-nav span {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink-2); background: var(--raised);
+    white-space: nowrap; margin-left: 0;
+  }
+  .views-nav a:hover { border-color: var(--accent); color: var(--ink); }
+  .views-nav [aria-current="page"] {
+    border-color: var(--accent); color: var(--ink); font-weight: 600;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  header {
+    padding: 18px 24px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { margin: 2px 0 0; font-size: 20px; text-transform: uppercase; letter-spacing: .01em; }
+  header a { margin-left: auto; color: var(--accent); font-size: 13px; }
+
+  main { padding: 18px 24px 48px; max-width: 1100px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 18px; }
+  .panel > h2 {
+    margin: 0; padding: 11px 14px; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The seat strip is the navigation, exactly as it is on the 2-7 page: every
+     action is a link to where it goes, and a seat's box goes back to that
+     seat's own decision. */
+  .seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; padding: 12px; }
+  .seat { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--raised); }
+  .seat.is-acting { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .seat[data-node] { cursor: pointer; }
+  .seat[data-node]:hover { border-color: var(--accent); }
+  .who { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+  .pos { font-weight: 700; font-size: 13px; }
+  .bb { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .lines { display: flex; flex-direction: column; gap: 3px; }
+  .lines button, .lines span {
+    display: block; width: 100%; text-align: left; font: inherit; font-size: 12px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-2);
+    border-radius: 7px; padding: 3px 7px; cursor: pointer;
+  }
+  .lines button:hover { border-color: var(--accent); color: var(--ink); }
+  .lines span { cursor: default; opacity: .75; }
+  .lines .taken { background: var(--chip); font-weight: 600; color: var(--ink); }
+  .lines .ahead { border-style: dotted; }
+
+  /* The matrix: thirteen by thirteen, pairs down the diagonal, suited above. */
+  .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; padding: 12px; }
+  .cell {
+    position: relative; aspect-ratio: 1; border-radius: 3px; overflow: hidden;
+    background: var(--fold); border: 1px solid rgba(255,255,255,.05);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; color: var(--ink-2); cursor: default;
+  }
+  /* The shove portion fills from the bottom, so a glance reads as a bar chart. */
+  .cell i {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--shove); opacity: .85;
+  }
+  .grid.calling .cell i { background: var(--call); }
+  .seats.sub { padding-top: 0; }
+  .cell span { position: relative; z-index: 1; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+  .cell.pair { box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
+  .cell.on { color: #fff; }
+
+  .legend { display: flex; gap: 18px; padding: 0 14px 12px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; align-items: center; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .note { padding: 0 14px 14px; font-size: 12px; color: var(--ink-3); }
+  .loading { padding: 40px; text-align: center; color: var(--ink-3); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 12px; border-bottom: 1px solid var(--line); text-align: right; }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  th:first-child, td:first-child { text-align: left; }
+  td { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  td.big { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="eyebrow">All-in or fold</div>
+    <h1>No Limit Hold'em</h1>
+  </div>
+  <div class="eyebrow" id="meta"></div>
+  <nav class="views-nav">
+    <a href="/">Ranked hands</a>
+    <a href="/strategy.html">2-7 pre-draw</a>
+    <span aria-current="page">Hold'em push-fold</span>
+  </nav>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>The table</h2>
+    <div class="seats" id="seats"></div>
+    <p class="note" id="line"></p>
+  </section>
+
+  <section class="panel">
+    <h2 id="gridTitle">Range</h2>
+    <div class="grid" id="grid"><div class="loading">Loading…</div></div>
+    <div class="legend">
+      <span id="actionSwatch"><i class="swatch" style="background:var(--shove)"></i>All-in</span>
+      <span><i class="swatch" style="background:var(--fold)"></i>Fold</span>
+      <span id="mixNote" style="color:var(--ink-3)"></span>
+    </div>
+    <p class="note" id="note"></p>
+  </section>
+
+  <section class="panel">
+    <h2>Every seat, folded round</h2>
+    <div id="summary"></div>
+  </section>
+</main>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const state = { data: null, node: null };
+
+const COLOURS = {
+  fold: 'var(--fold-line)', call: 'var(--call)', allin: 'var(--shove)',
+};
+
+const answer = await fetch('/api/pushfold').then((r) => r.json()).catch(() => ({ running: false }));
+if (!answer.running) {
+  $('grid').innerHTML = '<div class="loading">No push-fold solve yet. Build it with '
+    + '<code>node scripts/pushfold.mjs</code>.</div>';
+} else {
+  state.data = answer;
+  start();
+}
+
+function start() {
+  const d = state.data;
+  const dead = d.dead.toFixed(1).replace(/\.0$/, '');
+  $('meta').textContent = `${d.config.players}-handed · ${d.config.stack}bb behind · `
+    + `${d.config.ante}bb ante each (${dead}bb dead) · ${d.config.smallBlind}/${d.config.bigBlind} · `
+    + `${d.iterations.toLocaleString()} iterations`;
+
+  $('summary').innerHTML = `<table><thead><tr><th>Seat</th><th>Shoves</th>
+    <th>Hands</th></tr></thead><tbody>`
+    + d.opening.map(({ seat, node }) => {
+      const hands = Math.round(d.nodes[node].frequency / 100 * 1326);
+      return `<tr><td>${d.names[seat]}</td><td class="big">${d.nodes[node].frequency.toFixed(1)}%</td>`
+        + `<td>${hands} of 1,326</td></tr>`;
+    }).join('')
+    + '</tbody></table>';
+
+  show(d.opening[0].node);
+}
+
+/**
+ * The seat strip, which doubles as the navigation.
+ *
+ * Every seat shows the whole of its own decision: the action it took in this
+ * line is marked and the rest are still links, so a hand can be walked back and
+ * sent down the other road. A seat that has not acted shows what it would face
+ * if everyone between folded. The box itself goes back to that seat's decision.
+ */
+function renderSeats() {
+  const d = state.data;
+  const node = d.nodes[state.node];
+
+  $('seats').innerHTML = d.order.map((seat) => {
+    const acting = seat === node.seat;
+    const jump = node.jumps[seat];
+    let lines;
+    if (acting) {
+      lines = node.actions.map((action) => action.child >= 0
+        ? `<button data-node="${action.child}" style="border-left:3px solid ${COLOURS[action.kind]}">${action.label}</button>`
+        : `<span style="border-left:3px solid ${COLOURS[action.kind]}">${action.label}</span>`);
+    } else if (jump && jump.node >= 0) {
+      lines = jump.actions.map((action, i) => action.child >= 0
+        ? `<button class="${i === jump.took ? 'taken' : 'ahead'}" data-node="${action.child}"`
+          + ` style="border-left:3px solid ${COLOURS[action.kind]}">${action.label}</button>`
+        : `<span class="${i === jump.took ? 'taken' : ''}" style="border-left:3px solid ${COLOURS[action.kind]}">${action.label}</span>`);
+    } else {
+      lines = ['<span>—</span>'];
+    }
+
+    const to = acting ? -1 : (jump?.node ?? -1);
+    const title = jump?.took >= 0
+      ? `Back to ${d.names[seat]}'s decision`
+      : `${d.names[seat]}'s decision, folded round`;
+    return `<div class="seat${acting ? ' is-acting' : ''}"`
+      + `${to >= 0 ? ` data-node="${to}" title="${title}"` : ''}>`
+      + `<div class="who"><span class="pos">${d.names[seat]}</span>`
+      + `<span class="bb">${d.config.stack}bb</span></div>`
+      + `<div class="lines">${lines.join('')}</div></div>`;
+  }).join('');
+
+  for (const button of $('seats').querySelectorAll('button[data-node]')) {
+    button.onclick = (event) => {
+      // A button leads somewhere of its own, so it is not also a click on the
+      // box around it.
+      event.stopPropagation();
+      show(Number(button.dataset.node));
+    };
+  }
+  for (const box of $('seats').querySelectorAll('.seat[data-node]')) {
+    box.onclick = () => show(Number(box.dataset.node));
+  }
+
+  $('line').textContent = node.sequence.length
+    ? node.sequence.map((step) => `${step.name} ${step.label}`).join(' · ')
+    : 'First in.';
+}
+
+/** One decision, as the 13x13 grid everybody reads ranges in. */
+function show(nodeId) {
+  const d = state.data;
+  state.node = nodeId;
+  const node = d.nodes[nodeId];
+  renderSeats();
+
+  const seat = d.names[node.seat];
+  const verb = node.facing ? 'calls' : 'shoves';
+  $('gridTitle').textContent = `${seat} — ${verb} ${node.frequency.toFixed(1)}% of hands`;
+  $('grid').classList.toggle('calling', node.facing);
+  $('actionSwatch').innerHTML = node.facing
+    ? '<i class="swatch" style="background:var(--call)"></i>Call all-in'
+    : '<i class="swatch" style="background:var(--shove)"></i>All-in';
+
+  const stack = d.config.stack;
+  if (node.facing) {
+    const shovers = node.live.map((s) => d.names[s]).join(' and ');
+    const already = d.dead + stack * node.live.length
+      + (node.live.includes(0) ? 0 : d.config.smallBlind)
+      + (node.live.includes(1) ? 0 : d.config.bigBlind);
+    $('note').textContent = `${shovers} all-in. ${seat} is calling ${stack}bb `
+      + `into about ${already.toFixed(1)}bb.`;
+  } else {
+    $('note').textContent = `Nobody in yet. ${seat} risks ${stack}bb to win `
+      + `${(d.dead + d.config.smallBlind + d.config.bigBlind).toFixed(1)}bb.`;
+  }
+
+  let mixed = 0;
+  const cells = [];
+  for (let row = 0; row < 13; row += 1) {
+    for (let column = 0; column < 13; column += 1) {
+      const index = row * 13 + column;
+      const share = node.shove[index];
+      if (share > 0.005 && share < 0.995) mixed += 1;
+      const label = d.labels[index];
+      cells.push(`<div class="cell${row === column ? ' pair' : ''}${share > 0.5 ? ' on' : ''}"
+        title="${label} — ${node.facing ? 'call' : 'all-in'} ${Math.round(share * 100)}%">
+        <i style="height:${(share * 100).toFixed(1)}%"></i><span>${label}</span></div>`);
+    }
+  }
+  $('grid').innerHTML = cells.join('');
+  $('mixNote').textContent = mixed
+    ? `${mixed} hand${mixed === 1 ? '' : 's'} played both ways`
+    : 'nothing mixed';
+}
+</script>
+</body>
+</html>
