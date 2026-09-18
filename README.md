@@ -81,6 +81,7 @@ npm test
 npm run measure          # the hand space, recounted from the deck
 npm run measure:tree     # the betting tree, and what a solve over it costs
 npm run measure:buckets  # the hand abstraction, priced at each level of detail
+npm run measure:triple   # what fixed limit triple draw would cost, before trying
 ```
 
 Every measurement script recomputes the numbers quoted in the design, so none of
@@ -119,6 +120,12 @@ in position, with all-in the only raise. Draws are pat, one or two.
 
 Each of those is a deliberate pruning, and together they are what makes the tree
 fit: unpruned it needed 204 GB, pruned it needs under one.
+
+**Fixed limit triple draw** is started but not finished. `tripleDrawConfig()`
+builds its tree — four betting rounds around three draws, one bet size a round
+with a cap, and the size stepping up for the last two — and `npm run
+measure:triple` prices it. Nothing solves it yet: the solver still assumes a hand
+is drawn to once. `HANDOFF.md` has the numbers and what is left.
 
 ## The rules that make this game
 

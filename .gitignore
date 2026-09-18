@@ -4,3 +4,4 @@ data/ranked.json
 data/pushfold.json
 *.log
 .DS_Store
+data/badugi-*.json

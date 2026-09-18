@@ -15,7 +15,7 @@ is. This file is the honest state of play.
 | `lib/ranking.js` | The 7,462 display rows, and which draw each hand takes |
 | `lib/grouping.js` | The hierarchy a range is read in |
 | `lib/coarse.js` | The abstraction the **solver** runs on — a few hundred |
-| `lib/tree.js` | The betting tree, pre-draw through showdown |
+| `lib/tree.js` | The betting tree: rounds, draws between them, no limit or fixed limit |
 | `lib/rollout.js` | Fixed policy for a pre-draw-only solve |
 | `lib/solve.js` | Monte Carlo CFR — external sampling, CFR+ or Discounted CFR |
 | `lib/exploitability.js` | Best response per seat, and NashConv — how much a solve gives away |
@@ -237,6 +237,137 @@ hands with a network rather than bucketing them. It is also a different runtime
 and much harder to verify, and three silent modelling bugs in this project were
 caught by checking invariants that a learned approximator would blur.
 
+## Fixed limit triple draw, so far
+
+The betting tree builds; nothing solves it yet. `lib/tree.js` now describes
+betting *rounds* rather than two hardcoded streets - `drawRounds: 3` gives four
+rounds around three draws, and `roundStreet(round)` says only which order a
+round runs in. `betting: 'limit'` swaps the sizing model for one bet size a
+round, a raise of the same size, a step up for the last two rounds, and a cap.
+`tripleDrawConfig()` is the whole game in one object. The single draw game is
+untouched: same 115,072 nodes seven-handed, same tree fingerprints, so every
+stored solve still loads.
+
+The cap is what bounds a limit tree, where stacks running out is what bounds a
+no limit one - which is why the config is 200bb rather than 40bb. Depth costs a
+limit tree nothing.
+
+**Two walls, both measured** - `npm run measure:triple` prints them:
+
+| draws | most drawn | nodes | growth |
+| --- | --- | --- | --- |
+| 1 | 2 | 1,070 | |
+| 2 | 2 | 25,964 | 24x |
+| 3 | 2 | **528,002** | 20x |
+| 3 | 3 | **2,878,616** | 36x |
+| 3 | 5 | over 3,000,000 | out of memory at 12GB |
+
+Each draw round multiplies the tree by twenty to ninety times, because what
+everyone drew is public and a state that forgets it is a different game. A
+two-card ceiling heads-up is 528 thousand nodes, the same order as the sized
+six-handed single draw tree that already solves.
+
+The second wall is the deck. Replacements are dealt before the walk, so that a
+hand comparing its actions compares them against one future rather than several,
+and that needs `5 + 3 x maxDraw` cards a player: 40 heads-up at five cards a
+draw, 60 three-handed, 66 six-handed even at two. **Triple draw is a heads-up
+game for this solver, and that is the deck's decision rather than anyone's.**
+
+What is not built is everything that solves it. `lib/solve.js` indexes a
+post-draw hand as `optionBucket[seat * 3 + draws[seat]]` - one draw round, three
+options, hardcoded - and `ranking.js`, `coarse.js` and `draws.js` all assume a
+hand is drawn to once. The draw ceiling decides how much of that work there is.
+
+## Six-handed triple draw, and why it is not a pruning problem
+
+The tree builds and the game is described; what is missing is everything that
+solves it. Before starting, know what it costs, because the measurements say it
+is expensive in a way more pruning will not fix.
+
+**The prunings that work, measured six-handed with one draw:**
+
+| what | nodes |
+| --- | --- |
+| everything on | over 9,000,000 |
+| no limping | over 9,000,000 |
+| no limp, and cold calls from BTN/BB only | over 9,000,000 |
+| **+ no cold calling a 3-bet: four-bet or fold** | **567,956** |
+| and three bets a round instead of four | 32,523 |
+
+**The third rule is the one that does the work**, and the first two are worth
+almost nothing without it. That is not what an earlier version of this section
+said: it claimed the first two were worth ninety times together, which was
+measured against a tree where barring a seat from cold calling also barred it
+from raising. That is not the rule - a seat that may not flat may still 3-bet,
+which is the whole point of it - and fixing it moved the number from 97,933 to
+over nine million. The prune that matters is the one that stops a *reraised*
+pot going multiway, because that is the pot with the most money and the most
+streets left.
+
+It is still not enough for 2-7. Each draw round multiplies what is left by
+about ninety, so three draws projects to hundreds of millions of nodes.
+**Six-handed triple draw cannot be one exact tree**, and no further pruning
+closes that.
+
+**Badugi is the version of this that fits.** Four cards rather than five, and a
+draw ceiling that is genuinely lower - three cards is a big-blind defence and
+little else - so `2,1,1` covers the game where 2-7 wanted `3,2,2` or worse. With
+all three rules above and three bets a round:
+
+| players | nodes | cards of 52 |
+| --- | --- | --- |
+| 2 | 33,674 | 16 |
+| 3 | 97,253 | 24 |
+| 4 | out of memory at 11GB | 32 |
+
+Three-handed badugi is smaller than the six-handed 2-7 tree that already solves.
+And it needs no hand abstraction at all: all 270,725 four-card hands collapse to
+**1,092 distinct values** (13 one-card, 78 two-card, 286 three-card, 715
+badugis; only 6.3% of hands are a complete badugi). So like push-fold, and
+unlike everything else here, a disagreement with a known answer would be a bug
+rather than an artifact - which is what makes it worth solving.
+
+Two things to fix before doing it. `positionNames(3)` calls the button UTG, so
+a rule keyed on seat names - `coldCallSeats: ['BTN','BB']` - silently bars the
+three-handed button from cold calling. And the draw ceiling is per round but not
+per seat, which is what "only the big blind draws three" wants.
+
+**So the pre-draw and the draws have to be solved separately, and that costs
+accuracy.** `lib/rollout.js` already does this for single draw: a fixed policy
+plays the hand out so the pre-draw solve has a value at its leaves. The same
+six-handed game solved both ways, 10M iterations with exploration:
+
+| seat | draw played out | draw rolled out | difference |
+| --- | --- | --- | --- |
+| UTG | 19.4 | 19.5 | +0.1 |
+| HJ | 23.9 | 22.1 | -1.8 |
+| CO | 26.7 | 25.7 | -1.0 |
+| **BTN** | **42.8** | **36.6** | **-6.2** |
+| SB | 73.7 | 72.2 | -1.5 |
+
+Early seats barely notice, because they fold nearly everything either way and
+their value is decided before the draw. The button loses six points, because it
+is the seat whose hands are worth what they are worth *for how they play after*
+the draw, and a frozen script is exactly what takes that away. **That is with
+one draw to approximate.** Triple draw would have the script covering three
+draws and three betting rounds, so six points is a floor.
+
+The honest route is the one `rollout.js` names in its own header: solve the
+subgame, feed its values back, re-run, and watch whether the ranges stop moving.
+Heads-up triple draw is affordable as an exact solve - 938,648 nodes at a 3,2,2
+ceiling - so it can be the thing that produces those values instead of a
+threshold table.
+
+**What it would take.** The tree is done; the solver is not. `lib/solve.js`
+indexes a post-draw hand as `optionBucket[seat * 3 + draws[seat]]` - one round,
+three options, hardcoded - and needs to index a hand by its whole draw
+*sequence*. Replacements for three rounds have to come off one deck. And the
+hand abstraction has to describe a hand at four points in a hand rather than
+one, which is the part nobody can cost until someone reads `ranking.js` and
+`coarse.js` and decides whether a bucket can carry a draw stage. **Settle that
+question first**: it is half an hour of reading, and it is the difference
+between a first pass that is large and one that is twice as large.
+
 ## What I would do next
 
 1. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
@@ -282,3 +413,9 @@ caught by checking invariants that a learned approximator would blur.
    and forty minutes, most of it the 100M one. `HANDOFF.md` quotes 146 twice in
    the vectorised CFR argument, where the number is the size of an equity matrix
    and would become 152.
+8. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
+   hands. Shelved on purpose rather than forgotten: the 1,092 values already
+   exist in `lib/badugi.js` with their labels and combination counts, so this is
+   a page over data that is already computed, and the solve is worth having
+   first. Badugi is easier to rank than 2-7 - size then lowness, with no draw
+   policy to agree on - so most of `lib/ranking.js` has no counterpart here.
