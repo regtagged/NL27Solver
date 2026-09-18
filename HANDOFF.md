@@ -289,21 +289,48 @@ is expensive in a way more pruning will not fix.
 | what | nodes |
 | --- | --- |
 | everything on | over 9,000,000 |
-| cold calls from BTN/BB only | over 9,000,000 |
 | no limping | over 9,000,000 |
-| **both together** | **97,933** |
-| both, and three bets a round instead of four | 30,823 |
+| no limp, and cold calls from BTN/BB only | over 9,000,000 |
+| **+ no cold calling a 3-bet: four-bet or fold** | **567,956** |
+| and three bets a round instead of four | 32,523 |
 
-Neither of the two is worth anything alone, because either one leaves a cheap
-way for five players to see the draw and one cheap way is all it takes. Together
-they are worth more than ninety times, and they make `maxToDraw` redundant -
-the same 97,933 nodes with the cap on and off - so the artificial cap can go and
-two rules that are just poker can stay.
+**The third rule is the one that does the work**, and the first two are worth
+almost nothing without it. That is not what an earlier version of this section
+said: it claimed the first two were worth ninety times together, which was
+measured against a tree where barring a seat from cold calling also barred it
+from raising. That is not the rule - a seat that may not flat may still 3-bet,
+which is the whole point of it - and fixing it moved the number from 97,933 to
+over nine million. The prune that matters is the one that stops a *reraised*
+pot going multiway, because that is the pot with the most money and the most
+streets left.
 
-It is still not enough. Each draw round multiplies what is left by about ninety
-(30,823 to 2,909,428 for the second draw), so three draws projects to roughly
-270 million nodes, a hundred times past what this machine builds. **Six-handed
-triple draw cannot be one exact tree**, and no further pruning closes that.
+It is still not enough for 2-7. Each draw round multiplies what is left by
+about ninety, so three draws projects to hundreds of millions of nodes.
+**Six-handed triple draw cannot be one exact tree**, and no further pruning
+closes that.
+
+**Badugi is the version of this that fits.** Four cards rather than five, and a
+draw ceiling that is genuinely lower - three cards is a big-blind defence and
+little else - so `2,1,1` covers the game where 2-7 wanted `3,2,2` or worse. With
+all three rules above and three bets a round:
+
+| players | nodes | cards of 52 |
+| --- | --- | --- |
+| 2 | 33,674 | 16 |
+| 3 | 97,253 | 24 |
+| 4 | out of memory at 11GB | 32 |
+
+Three-handed badugi is smaller than the six-handed 2-7 tree that already solves.
+And it needs no hand abstraction at all: all 270,725 four-card hands collapse to
+**1,092 distinct values** (13 one-card, 78 two-card, 286 three-card, 715
+badugis; only 6.3% of hands are a complete badugi). So like push-fold, and
+unlike everything else here, a disagreement with a known answer would be a bug
+rather than an artifact - which is what makes it worth solving.
+
+Two things to fix before doing it. `positionNames(3)` calls the button UTG, so
+a rule keyed on seat names - `coldCallSeats: ['BTN','BB']` - silently bars the
+three-handed button from cold calling. And the draw ceiling is per round but not
+per seat, which is what "only the big blind draws three" wants.
 
 **So the pre-draw and the draws have to be solved separately, and that costs
 accuracy.** `lib/rollout.js` already does this for single draw: a fixed policy
