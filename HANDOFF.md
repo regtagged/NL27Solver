@@ -385,7 +385,35 @@ between a first pass that is large and one that is twice as large.
 5. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
    more than CFR+ to DCFR.
 6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
-7. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
+7. **Re-key the draw buckets on outs, not on the best hand they could make.**
+   A draw bucket is named for the best hand its keep could finish as, which is
+   not how often it finishes. `D1 76` spans 4 to 12 outs of 48, because 7-6-5-4
+   makes a seven only with a deuce - the three and the eight are both straights -
+   while 7-6-3-2 has the full twelve. They share a bucket and therefore a
+   strategy. 14% of draw-one combos sit in a bucket whose keeps disagree like
+   that, and it is why the EV column reads backwards: `D1 85`, whose four keeps
+   all have twelve outs, prices above `D1 76`, whose name sounds better. The
+   readme already says the same thing about single hands - 8-5-4-3 beats 7-5-4-3
+   as a draw - so the abstraction is disagreeing with the design.
+
+   Adding the outs to the key is a **strict refinement**: it splits the six
+   buckets that were lying and merges nothing, so every distinction that exists
+   today survives. Measured, draw-one goes from 26 buckets to 32 and the total
+   from 146 to 152.
+
+   Draw-two has the same key and the same fault, more widely and far less badly:
+   29% of its combos are in a mixed bucket, but the worst is `D2 76` at 3 to 6
+   rank pairs of 45 - a 2x spread against draw-one's 3x - and most are 1.2x.
+   Splitting those as well is 26 buckets to 34. Worth doing for draw-one; for
+   draw-two, only where the spread reaches 2x.
+
+   It invalidates every stored solve, which is safe rather than dangerous -
+   `load` already refuses on a bucket count mismatch, so nothing silently
+   mis-reads - and re-solving the four that are actually served is about an hour
+   and forty minutes, most of it the 100M one. `HANDOFF.md` quotes 146 twice in
+   the vectorised CFR argument, where the number is the size of an equity matrix
+   and would become 152.
+8. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
    hands. Shelved on purpose rather than forgotten: the 1,092 values already
    exist in `lib/badugi.js` with their labels and combination counts, so this is
    a page over data that is already computed, and the solve is worth having
