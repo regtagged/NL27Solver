@@ -1,6 +1,7 @@
 node_modules/
 solves/
 data/ranked.json
+data/pushfold.json
 *.log
 .DS_Store
 data/badugi-*.json
