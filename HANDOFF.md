@@ -278,6 +278,69 @@ post-draw hand as `optionBucket[seat * 3 + draws[seat]]` - one draw round, three
 options, hardcoded - and `ranking.js`, `coarse.js` and `draws.js` all assume a
 hand is drawn to once. The draw ceiling decides how much of that work there is.
 
+## Six-handed triple draw, and why it is not a pruning problem
+
+The tree builds and the game is described; what is missing is everything that
+solves it. Before starting, know what it costs, because the measurements say it
+is expensive in a way more pruning will not fix.
+
+**The prunings that work, measured six-handed with one draw:**
+
+| what | nodes |
+| --- | --- |
+| everything on | over 9,000,000 |
+| cold calls from BTN/BB only | over 9,000,000 |
+| no limping | over 9,000,000 |
+| **both together** | **97,933** |
+| both, and three bets a round instead of four | 30,823 |
+
+Neither of the two is worth anything alone, because either one leaves a cheap
+way for five players to see the draw and one cheap way is all it takes. Together
+they are worth more than ninety times, and they make `maxToDraw` redundant -
+the same 97,933 nodes with the cap on and off - so the artificial cap can go and
+two rules that are just poker can stay.
+
+It is still not enough. Each draw round multiplies what is left by about ninety
+(30,823 to 2,909,428 for the second draw), so three draws projects to roughly
+270 million nodes, a hundred times past what this machine builds. **Six-handed
+triple draw cannot be one exact tree**, and no further pruning closes that.
+
+**So the pre-draw and the draws have to be solved separately, and that costs
+accuracy.** `lib/rollout.js` already does this for single draw: a fixed policy
+plays the hand out so the pre-draw solve has a value at its leaves. The same
+six-handed game solved both ways, 10M iterations with exploration:
+
+| seat | draw played out | draw rolled out | difference |
+| --- | --- | --- | --- |
+| UTG | 19.4 | 19.5 | +0.1 |
+| HJ | 23.9 | 22.1 | -1.8 |
+| CO | 26.7 | 25.7 | -1.0 |
+| **BTN** | **42.8** | **36.6** | **-6.2** |
+| SB | 73.7 | 72.2 | -1.5 |
+
+Early seats barely notice, because they fold nearly everything either way and
+their value is decided before the draw. The button loses six points, because it
+is the seat whose hands are worth what they are worth *for how they play after*
+the draw, and a frozen script is exactly what takes that away. **That is with
+one draw to approximate.** Triple draw would have the script covering three
+draws and three betting rounds, so six points is a floor.
+
+The honest route is the one `rollout.js` names in its own header: solve the
+subgame, feed its values back, re-run, and watch whether the ranges stop moving.
+Heads-up triple draw is affordable as an exact solve - 938,648 nodes at a 3,2,2
+ceiling - so it can be the thing that produces those values instead of a
+threshold table.
+
+**What it would take.** The tree is done; the solver is not. `lib/solve.js`
+indexes a post-draw hand as `optionBucket[seat * 3 + draws[seat]]` - one round,
+three options, hardcoded - and needs to index a hand by its whole draw
+*sequence*. Replacements for three rounds have to come off one deck. And the
+hand abstraction has to describe a hand at four points in a hand rather than
+one, which is the part nobody can cost until someone reads `ranking.js` and
+`coarse.js` and decides whether a bucket can carry a draw stage. **Settle that
+question first**: it is half an hour of reading, and it is the difference
+between a first pass that is large and one that is twice as large.
+
 ## What I would do next
 
 1. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
