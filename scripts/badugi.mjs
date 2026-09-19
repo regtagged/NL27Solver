@@ -3,6 +3,7 @@
  *
  *   node --max-old-space-size=12000 scripts/badugi.mjs [--players 2]
  *                                   [--iterations 10000000] [--seed 21]
+ *                                   [--max-to-draw 2] [--explore 0.02]
  *
  * The whole strategy is 22,187 decisions by 1,092 hands, which is far too much
  * to write as JSON and not much use spelled out. What goes to disk is the
@@ -16,8 +17,8 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { tripleDrawConfig, positionNames, preDrawOrder, DRAWING } from '../lib/tree.js';
-import { BadugiSolver } from '../lib/badugi-solve.js';
+import { positionNames, preDrawOrder, DRAWING } from '../lib/tree.js';
+import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { badugiTable } from '../lib/badugi.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,27 +30,43 @@ const flag = (name, fallback) => {
 
 const players = flag('players', 2);
 const iterations = flag('iterations', 10000000);
-const config = tripleDrawConfig({
-  players,
-  allowLimp: false,
-  coldCallSeats: ['BTN', 'BB'],
-  coldCallThreeBets: false,
-  maxToDraw: null,
-  maxDraw: [2, 1, 1],
-  maxDrawBySeat: { BB: [3, 1, 1] },
-  limit: { smallBet: 1, bigBet: 2, bigBetFrom: 2, cap: 3 },
-  nodeLimit: 9e6,
-});
 
-const solver = new BadugiSolver({ config, seed: flag('seed', 21), trackEv: false });
+// It counts *voluntary* entries and the big blind has not entered by posting,
+// so a cap of two means the pot is usually heads-up and at most three-way.
+const maxToDraw = argv.includes('--max-to-draw') ? flag('max-to-draw') : undefined;
+
+/**
+ * Exploration, and why a solve of this game wants it.
+ *
+ * The average strategy only accumulates where play actually goes, so a hand
+ * that opens 0% never trains its own post-open decisions - and opening then
+ * gets priced as opening and playing randomly, which is worse than folding, so
+ * it stays at 0% whichever way round it should have been. The seat this costs
+ * most is the button, whose hands are worth what they are worth *for how they
+ * play after*, which is exactly what never gets trained.
+ *
+ * `lib/solve.js` has carried this for 2-7 for a while; badugi was constructed
+ * without it, which is the first thing to rule out when a strategy opens the
+ * button tighter than UTG. It is deliberately not importance-weighted: the
+ * correct weighting gives an explored line weight zero, which is the whole
+ * thing it is there to fix. The bias is O(ε).
+ */
+const explore = flag('explore', 0.02);
+
+const config = badugiConfig({ players, maxToDraw });
+const solver = new BadugiSolver({
+  config, seed: flag('seed', 21), trackEv: false, explore,
+});
 const { labels, combos } = badugiTable();
 const names = positionNames(players);
 
 console.log(`Fixed-limit badugi, ${players}-handed, three draws, ceiling 2,1,1 `
-  + `(the big blind may take three first).`);
+  + `(the big blind may take three first)`
+  + `${config.maxToDraw == null ? '' : `, at most ${config.maxToDraw} seats entering`}.`);
 console.log(`${solver.nodes.length.toLocaleString()} nodes, ${solver.handCount} hand values, `
   + `${solver.cardsNeeded} of 52 cards a deal.`);
-console.log(`${iterations.toLocaleString()} iterations…\n`);
+console.log(`${iterations.toLocaleString()} iterations, exploring `
+  + `${(100 * explore).toFixed(1)}% of the time…\n`);
 
 /** The decisions worth writing down, found by walking rather than by id. */
 function spots() {

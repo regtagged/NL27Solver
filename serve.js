@@ -18,6 +18,7 @@ import { Solver } from './lib/solve.js';
 import { indexNodes, strategyTree, foldRoundTo, followLine } from './lib/browse.js';
 import { positionNames, preDrawOrder, threeBetFlag } from './lib/tree.js';
 import { save, load, solveKey } from './lib/checkpoint.js';
+import { handFacts } from './lib/badugi-benchmark.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
@@ -282,6 +283,24 @@ const server = createServer(async (request, response) => {
     if (!existsSync(pushFoldFile)) return json(response, { running: false });
     const body = JSON.parse(readFileSync(pushFoldFile));
     return json(response, { running: true, ...body });
+  }
+
+  /**
+   * A solved badugi spot, with the hand facts the page needs to group by.
+   *
+   * The solve stores a strategy per hand *value* and nothing about what those
+   * values are; `handFacts` supplies the size, the cards and the combination
+   * count, which is what turns 1,092 numbers into rows a player reads. Computed
+   * here rather than written into the file, because it is a property of the
+   * deck and not of any particular solve.
+   */
+  if (url.pathname === '/api/badugi') {
+    const spot = url.searchParams.get('spot') ?? 'btn-bb';
+    const file = resolve(here, 'data', `badugi-${spot.replace(/[^a-z0-9-]/gi, '')}.json`);
+    if (!existsSync(file)) return json(response, { running: false });
+    const body = JSON.parse(readFileSync(file));
+    const { hands } = handFacts();
+    return json(response, { running: true, ...body, hands });
   }
 
   if (url.pathname === '/api/ranked') {

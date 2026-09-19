@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BB, ACTIVE, FOLDED, ALLIN, PRE_DRAW, POST_DRAW, DRAWING, postDrawOrder,
   defaultConfig, positionNames, preDrawOrder, initialState, legalActions,
-  applyAction, buildTree, potOf, threeBetFlag,
+  applyAction, buildTree, potOf, threeBetFlag, tripleDrawConfig, stateAfter,
 } from '../lib/tree.js';
 
 const labels = (state, config) => legalActions(state, config).map((a) => a.label);
@@ -251,4 +251,39 @@ test('all-in is capped at the stack, and empties it', () => {
   assert.equal(state.committed[2], 40 * BB);
   assert.equal(state.status[2], ALLIN);
   assert.equal(state.betLevel, 40 * BB);
+});
+
+test('a tree can be built from part-way through a hand', () => {
+  const config = tripleDrawConfig({
+    players: 6, allowLimp: false, coldCallSeats: ['BTN', 'BB'], coldCallThreeBets: false,
+    maxToDraw: 2, maxDraw: [2, 1, 1], maxDrawBySeat: { BB: [3, 1, 1] },
+    limit: { smallBet: 1, bigBet: 2, bigBetFrom: 2, cap: 3 }, nodeLimit: 9e6,
+  });
+  const whole = buildTree(config);
+  const after = buildTree(config, stateAfter(config, ['raise', 'fold', 'fold', 'fold', 'fold']));
+
+  // Folded around to the big blind is a two-handed hand, so it is a fraction of
+  // the whole - which is the point: a subgame does not need the prunings that
+  // bound every line at once, because it is one line.
+  assert.ok(after.nodes.length < whole.nodes.length / 5,
+    `the subgame is ${after.nodes.length} of ${whole.nodes.length}`);
+
+  // The seat to act is the big blind, and it is facing a raise.
+  const root = after.nodes[after.root];
+  assert.equal(root.kind, 'decision');
+  assert.equal(positionNames(6)[root.seat], 'BB');
+  assert.ok(root.actions.some((a) => a.kind === 'call'), 'the blind may defend');
+});
+
+test('a line that could not happen is refused rather than built', () => {
+  const config = tripleDrawConfig({
+    players: 6, allowLimp: false, maxToDraw: 2, nodeLimit: 9e6,
+  });
+  // Limping is off, so calling the blind is not on offer to the first seat.
+  assert.throws(() => stateAfter(config, ['call']), /not legal for seat/);
+  // And a line cannot run past the end of its betting round.
+  assert.throws(
+    () => stateAfter(config, ['fold', 'fold', 'fold', 'fold', 'fold', 'fold']),
+    /closed before|not legal/,
+  );
 });

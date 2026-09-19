@@ -14,7 +14,12 @@
     "rank": "node --max-old-space-size=6000 scripts/rank-hands.mjs",
     "browse": "node --max-old-space-size=8000 serve.js --solve",
     "measure:triple": "node --max-old-space-size=8000 scripts/measure-triple.mjs",
-    "pushfold": "node scripts/pushfold.mjs"
+    "measure:badugi": "node --max-old-space-size=12000 scripts/measure-badugi.mjs",
+    "pushfold": "node scripts/pushfold.mjs",
+    "badugi": "node --max-old-space-size=12000 scripts/badugi.mjs",
+    "badugi:exploitability": "node --max-old-space-size=16000 scripts/badugi-exploitability.mjs",
+    "badugi:subgame": "node --max-old-space-size=20000 scripts/badugi-subgame.mjs",
+    "badugi:show": "node scripts/badugi-show.mjs"
   },
   "engines": {
     "node": ">=18"

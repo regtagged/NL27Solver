@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Badugi — one spot, solved exactly</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #131316;
+    --panel: #1b1b1f;
+    --raised: #232328;
+    --line: rgba(255, 255, 255, 0.13);
+    --ink: #eeeef2;
+    --ink-2: #b4b4bd;
+    --ink-3: #81818b;
+    --chip: rgba(255, 255, 255, 0.07);
+    --accent: #5b8ff9;
+    --raise: #c9433b;
+    --call: #40ac68;
+    --fold: #2a2a30;
+    --fold-line: #6c727a;
+    --pat: #b5862b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .views-nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .views-nav a, .views-nav span {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink-2); background: var(--raised);
+    white-space: nowrap;
+  }
+  .views-nav a:hover { border-color: var(--accent); color: var(--ink); }
+  .views-nav [aria-current="page"] {
+    border-color: var(--accent); color: var(--ink); font-weight: 600;
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  header {
+    padding: 18px 24px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+  h1 { margin: 2px 0 0; font-size: 20px; text-transform: uppercase; letter-spacing: .01em; }
+
+  main { padding: 18px 24px 48px; max-width: 1180px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 18px; }
+  .panel > h2 {
+    margin: 0; padding: 11px 14px; font-size: 11px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-3); font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel > .body { padding: 14px; }
+  .note { color: var(--ink-2); font-size: 13px; margin: 0 0 10px; }
+  .note strong { color: var(--ink); }
+
+  /* The line of decisions. Each is a button; the one being read is marked the
+     same way the nav marks the current page. */
+  .line { display: flex; gap: 6px; flex-wrap: wrap; padding: 14px; }
+  .step {
+    border: 1px solid var(--line); background: var(--raised); color: var(--ink-2);
+    border-radius: 9px; padding: 7px 11px; cursor: pointer; font: inherit; font-size: 12px;
+    text-align: left; min-width: 150px;
+  }
+  .step:hover { border-color: var(--accent); color: var(--ink); }
+  .step[aria-current="true"] {
+    border-color: var(--accent); color: var(--ink);
+    box-shadow: 0 0 0 1px var(--accent) inset;
+  }
+  .step .who { display: block; font-weight: 600; color: inherit; }
+  .step .mix { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
+  tbody tr:hover { background: var(--chip); }
+  tr.group-start td { border-top: 2px solid var(--line); }
+  td.hand { font-weight: 600; white-space: nowrap; }
+  td.combos { color: var(--ink-3); font-size: 12px; }
+
+  /* A hand's strategy as one bar, so a column of them reads as a range rather
+     than as a table of numbers. Widths are the frequencies themselves. */
+  .bar { display: flex; height: 17px; border-radius: 4px; overflow: hidden; background: var(--fold); min-width: 210px; }
+  .bar i { display: block; font-style: normal; font-size: 10px; line-height: 17px; text-align: center; color: #0d0d0f; overflow: hidden; }
+  .swatch.fold, .bar i.fold { background: var(--fold); color: var(--fold-line); box-shadow: inset 0 0 0 1px var(--fold-line); }
+  .swatch.call, .bar i.call { background: var(--call); }
+  .swatch.raise, .bar i.raise { background: var(--raise); color: #fff; }
+  .swatch.pat, .bar i.pat { background: var(--pat); }
+  .swatch.draw1, .bar i.draw1 { background: #4a7fd4; color: #fff; }
+  .swatch.draw2, .bar i.draw2 { background: #6c5ca8; color: #fff; }
+  .swatch.draw3, .bar i.draw3 { background: #40505f; color: #fff; }
+  td.strategy { width: 46%; }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 0 14px 14px; color: var(--ink-2); font-size: 12px; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend i { width: 13px; height: 13px; border-radius: 3px; display: block; flex: none; }
+
+  .stat { display: flex; gap: 26px; flex-wrap: wrap; padding: 14px; }
+  .stat div { min-width: 120px; }
+  .stat .k { color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+  .stat .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .thin { color: var(--ink-3); font-size: 11px; }
+  .warn { color: var(--pat); }
+
+  /* A class is a summary; the hands inside it are the thing being summarised.
+     Opening one indents its members and dims them slightly, so a long table
+     still reads as classes with detail hanging off them rather than as a flat
+     list of 1,092 rows. */
+  tr.klass { cursor: pointer; }
+  tr.klass:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  tr.klass.open td { background: var(--chip); }
+  .twist, .leaf {
+    display: inline-block; width: 13px; color: var(--ink-3);
+    font-size: 10px; margin-right: 5px;
+  }
+  tr.member td { font-weight: 400; }
+  tr.member td.hand {
+    padding-left: 30px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+  }
+  tr.member .bar { height: 13px; opacity: .88; }
+  tr.member td.combos { font-size: 11px; }
+
+  /* How far a class disagrees with itself, on the class row - the reason to
+     open one, shown without having to open every one. */
+  .split {
+    margin-left: 8px; font-size: 10px; font-weight: 600; padding: 1px 5px;
+    border-radius: 999px; color: var(--pat); border: 1px solid var(--pat);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="eyebrow" id="eyebrow">Fixed limit badugi</div>
+    <h1 id="title">Loading…</h1>
+  </div>
+  <div class="eyebrow" id="meta"></div>
+  <nav class="views-nav">
+    <a href="/">Ranked hands</a>
+    <a href="/strategy.html">2-7 pre-draw</a>
+    <a href="/pushfold.html">Hold'em push-fold</a>
+    <span aria-current="page">Badugi</span>
+  </nav>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>The spot</h2>
+    <div class="stat" id="facts"></div>
+    <p class="note" style="padding: 0 14px 14px; margin: 0;" id="caveat"></p>
+  </div>
+
+  <div class="panel">
+    <h2>The line — click a decision to read it</h2>
+    <div class="line" id="line"></div>
+  </div>
+
+  <div class="panel">
+    <h2 id="tableTitle">Range</h2>
+    <div class="legend" id="legend"></div>
+    <div class="body" style="padding-top: 0;">
+      <table>
+        <thead>
+          <tr><th>Hand</th><th>% of deck</th><th style="text-align:left">Strategy</th><th id="h1"></th><th id="h2"></th><th id="h3"></th><th id="h4"></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+const NAME = ['A','2','3','4','5','6','7','8','9','T','J','Q','K'];
+const SIZE = { 4: 'badugi', 3: 'tri', 2: 'two-card', 1: 'one-card' };
+let data = null, at = 0;
+
+/* A label's colour class. Draw counts and betting actions share this page, so
+   the mapping is by what the action is rather than by its position. */
+function classOf(action) {
+  if (action.kind === 'fold') return 'fold';
+  if (action.kind === 'call' || action.kind === 'check') return 'call';
+  if (action.kind === 'draw') return ['pat','draw1','draw2','draw3'][action.option] || 'draw3';
+  if (action.label === 'pat') return 'pat';
+  const m = /^d(\d)$/.exec(action.label);
+  if (m) return ['pat','draw1','draw2','draw3'][Number(m[1])] || 'draw3';
+  return 'raise';
+}
+
+/* The 1,092 values grouped the way hands are talked about: badugis and tris by
+   their high card, two-card holdings by name. Weighted by combinations, so a
+   row is what happens at the table and not an average over distinct values.
+
+   Each row keeps the hands inside it, because a class is a summary and the
+   summary is where the disagreements hide: 9-6-5 and 9-8-7 are both a nine-high
+   tri and have no reason to play alike. */
+function grouped(spot) {
+  const rows = new Map();
+  data.hands.forEach((hand, i) => {
+    const key = hand.size >= 3
+      ? `${NAME[hand.ranks[0]]}-high ${SIZE[hand.size]}`
+      : `${SIZE[hand.size]} ${hand.ranks.map((r) => NAME[r]).reverse().join('')}`;
+    if (!rows.has(key)) {
+      rows.set(key, { key, size: hand.size, ranks: hand.ranks, combos: 0, members: [],
+        w: spot.actions.map(() => 0) });
+    }
+    const row = rows.get(key);
+    row.combos += hand.combos;
+    row.members.push(i);
+    spot.actions.forEach((_, a) => { row.w[a] += hand.combos * spot.hands[i][a]; });
+  });
+  return [...rows.values()].sort((x, y) => (y.size - x.size)
+    || (x.ranks[0] - y.ranks[0]) || ((x.ranks[1] ?? 0) - (y.ranks[1] ?? 0)));
+}
+
+/** A hand's cards as a player says them: high to low, ace low. */
+const cardsOf = (hand) => hand.ranks.map((r) => NAME[r]).reverse().join('');
+
+/** One strategy as a bar whose segments are the frequencies themselves. */
+function barOf(spot, weights, total) {
+  return spot.actions.map((a, i) => {
+    const pct = 100 * weights[i] / total;
+    return pct < 0.5 ? ''
+      : `<i class="${classOf(a)}" style="width:${pct}%">${pct >= 12 ? pct.toFixed(0) + '%' : ''}</i>`;
+  }).join('');
+}
+
+/**
+ * How far a class disagrees with itself: the widest gap between any two of its
+ * hands on any one action, weighted by nothing - a class where one hand raises
+ * 90% and another 10% is 80 points apart however rare either is.
+ *
+ * It is the reason to open a row, so it is shown on the row rather than found
+ * by opening every one of them.
+ */
+function spread(spot, members) {
+  let most = 0;
+  for (let a = 0; a < spot.actions.length; a += 1) {
+    let low = Infinity;
+    let high = -Infinity;
+    for (const i of members) {
+      const v = spot.hands[i][a];
+      if (v < low) low = v;
+      if (v > high) high = v;
+    }
+    if (high - low > most) most = high - low;
+  }
+  return most;
+}
+
+function render() {
+  const spot = data.spots[at];
+  document.getElementById('tableTitle').textContent = spot.what;
+
+  document.getElementById('legend').innerHTML = spot.actions
+    .map((a) => `<span><i class="swatch ${classOf(a)}"></i>${a.label}</span>`)
+    .join('');
+
+  ['h1','h2','h3','h4'].forEach((id, i) => {
+    document.getElementById(id).textContent = spot.actions[i] ? spot.actions[i].label : '';
+  });
+
+  const rows = grouped(spot);
+  const total = rows.reduce((s, r) => s + r.combos, 0);
+  const blanks = '<td></td>'.repeat(4 - spot.actions.length);
+  let lastSize = null;
+  const html = [];
+
+  rows.forEach((r, index) => {
+    const start = lastSize !== null && r.size !== lastSize ? ' group-start' : '';
+    lastSize = r.size;
+    const cells = spot.actions.map((_, i) => `<td>${(100 * r.w[i] / r.combos).toFixed(1)}%</td>`).join('');
+    const gap = spread(spot, r.members);
+    const single = r.members.length === 1;
+    // A class with one hand in it has nothing to open; the two-card holdings
+    // are named outright and are already single hands.
+    const mark = single ? '<span class="leaf"></span>'
+      : `<span class="twist" aria-hidden="true">▸</span>`;
+    const warn = gap >= 0.25 && !single
+      ? `<span class="split" title="widest disagreement inside this class">±${(100 * gap).toFixed(0)}</span>` : '';
+    html.push(`<tr class="klass${start}" data-row="${index}"${single ? '' : ' tabindex="0"'}>`
+      + `<td class="hand">${mark}${r.key}${warn}</td>`
+      + `<td class="combos">${(100 * r.combos / total).toFixed(2)}%</td>`
+      + `<td class="strategy"><div class="bar">${barOf(spot, r.w, r.combos)}</div></td>`
+      + `${cells}${blanks}</tr>`);
+
+    if (!single) {
+      // Worst first inside a class, so the boundary hand - the one the class is
+      // named for - reads last.
+      const members = [...r.members].sort((a, b) => b - a);
+      for (const i of members) {
+        const hand = data.hands[i];
+        const mix = spot.hands[i];
+        const inner = spot.actions.map((_, a) => `<td>${(100 * mix[a]).toFixed(1)}%</td>`).join('');
+        html.push(`<tr class="member" data-of="${index}" hidden>`
+          + `<td class="hand">${cardsOf(hand)}</td>`
+          + `<td class="combos">${(100 * hand.combos / total).toFixed(3)}%</td>`
+          + `<td class="strategy"><div class="bar">${barOf(spot, mix.map((v) => v), 1)}</div></td>`
+          + `${inner}${blanks}</tr>`);
+      }
+    }
+  });
+  document.getElementById('rows').innerHTML = html.join('');
+
+  [...document.querySelectorAll('.step')].forEach((el, i) => {
+    el.setAttribute('aria-current', String(i === at));
+  });
+  open.forEach((index) => toggle(index, true));
+}
+
+/** Which classes are open, kept across redraws so a poll does not close them. */
+const open = new Set();
+
+function toggle(index, force) {
+  const head = document.querySelector(`tr.klass[data-row="${index}"]`);
+  if (!head) return;
+  const wanted = force ?? !open.has(index);
+  if (wanted) open.add(index); else open.delete(index);
+  head.classList.toggle('open', wanted);
+  const twist = head.querySelector('.twist');
+  if (twist) twist.textContent = wanted ? '▾' : '▸';
+  document.querySelectorAll(`tr.member[data-of="${index}"]`).forEach((row) => {
+    row.hidden = !wanted;
+  });
+}
+
+document.getElementById('rows').addEventListener('click', (event) => {
+  const row = event.target.closest('tr.klass');
+  if (row) toggle(Number(row.dataset.row));
+});
+document.getElementById('rows').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('tr.klass');
+  if (!row) return;
+  event.preventDefault();
+  toggle(Number(row.dataset.row));
+});
+
+async function start() {
+  const response = await fetch('/api/badugi');
+  const body = await response.json();
+  if (!body.running) {
+    document.getElementById('title').textContent = 'No badugi solve yet';
+    document.getElementById('caveat').textContent =
+      'Run npm run badugi:subgame -- --spot btn-bb to produce one.';
+    return;
+  }
+  data = body;
+  document.getElementById('title').textContent = body.what;
+  document.getElementById('meta').textContent =
+    `${body.iterations.toLocaleString()} iterations${body.complete ? '' : ' so far'}`;
+
+  document.getElementById('facts').innerHTML = [
+    ['Hand values', `${body.hands.length.toLocaleString()}`, 'every badugi hand, nothing bucketed'],
+    ['Button opens', `${body.preset.share.toFixed(1)}%`, 'preset, not solved'],
+    ['Draws', body.config.maxDraw.join(','), `${body.config.limit.cap} bets a round`],
+    ['Entry cap', 'none', 'two players left, so none is needed'],
+  ].map(([k, v, t]) => `<div><div class="k">${k}</div><div class="v">${v}</div><div class="thin">${t}</div></div>`).join('');
+
+  document.getElementById('caveat').innerHTML =
+    '<strong>Exact except for one thing.</strong> No hand abstraction, no entry cap, no rollout, '
+    + 'played to showdown. The button&rsquo;s opening range is an assumption the solve inherits rather '
+    + 'than tests &mdash; change it and every number here changes.';
+
+  document.getElementById('line').innerHTML = body.spots.map((s, i) =>
+    `<button class="step" data-i="${i}"><span class="who">${s.what}</span>`
+    + `<span class="mix">${s.actions.map((a, j) => `${a.label} ${s.overall[j].toFixed(0)}%`).join(' · ')}</span></button>`
+  ).join('');
+  document.getElementById('line').addEventListener('click', (event) => {
+    const button = event.target.closest('.step');
+    if (!button) return;
+    at = Number(button.dataset.i);
+    render();
+  });
+  render();
+}
+
+/**
+ * Watch a solve while it runs.
+ *
+ * The run rewrites its report on a clock, so the page re-reads it and redraws
+ * only when the iteration count has moved - redrawing on every poll would throw
+ * away the row you were reading. The decision you have selected is kept, since
+ * watching one decision settle is the reason to have this at all.
+ */
+async function watch() {
+  if (!data) return;
+  try {
+    const response = await fetch('/api/badugi');
+    const body = await response.json();
+    if (!body.running || body.iterations === data.iterations) return;
+
+    const wasComplete = body.complete;
+    data = body;
+    document.getElementById('meta').textContent =
+      `${body.iterations.toLocaleString()} iterations${wasComplete ? '' : ' so far'}`;
+    document.getElementById('line').querySelectorAll('.step').forEach((button, i) => {
+      const spot = body.spots[i];
+      if (!spot) return;
+      button.querySelector('.mix').textContent = spot.actions
+        .map((a, j) => `${a.label} ${spot.overall[j].toFixed(0)}%`).join(' · ');
+    });
+    render();
+  } catch {
+    // A poll that fails is a server restart or a half-written file; the next
+    // one will do. Nothing here is worth interrupting the page for.
+  }
+}
+
+start().then(() => setInterval(watch, 15000));
+</script>
+</body>
+</html>
