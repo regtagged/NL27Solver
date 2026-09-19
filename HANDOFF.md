@@ -22,6 +22,10 @@ is. This file is the honest state of play.
 | `lib/checkpoint.js` | Storing a solve so it is not paid for twice |
 | `lib/browse.js` | Walking the tree, and grouping a node's range |
 | `lib/equity.js` | Monte Carlo equity for the hand table |
+| `lib/badugi.js` | Badugi hand strength, and all 1,092 values of it |
+| `lib/badugi-solve.js` | Badugi solved on the hand itself, no abstraction |
+| `lib/holdem.js` | Hold'em strength: the wheel, and the best five of seven |
+| `lib/pushfold.js` | All-in or fold, walked exactly rather than sampled |
 
 Two abstractions on purpose. The viewer wants every hand spelled out; the solver
 wants as few distinct decisions as it can get, because each is an information
@@ -332,6 +336,10 @@ a rule keyed on seat names - `coldCallSeats: ['BTN','BB']` - silently bars the
 three-handed button from cold calling. And the draw ceiling is per round but not
 per seat, which is what "only the big blind draws three" wants.
 
+**Both of those are done**, and the table above is superseded by the one in the
+next section - it was measured before the big blind got its own ceiling, which
+costs a card and a branch and makes every number in it low.
+
 **So the pre-draw and the draws have to be solved separately, and that costs
 accuracy.** `lib/rollout.js` already does this for single draw: a fixed policy
 plays the hand out so the pre-draw solve has a value at its leaves. The same
@@ -367,6 +375,411 @@ one, which is the part nobody can cost until someone reads `ranking.js` and
 `coarse.js` and decides whether a bucket can carry a draw stage. **Settle that
 question first**: it is half an hour of reading, and it is the difference
 between a first pass that is large and one that is twice as large.
+
+## Six-handed badugi, priced
+
+**It fits, and it took a prune nobody had applied to this game.** Six-handed
+badugi is 534,848 nodes and 5.59 GB of strategy tables, which is the same order
+as the sized six-handed 2-7 tree that already solves. `npm run measure:badugi`
+prints everything below and recomputes it, so none of it can go stale.
+
+The missing lever was `maxToDraw`, the cap on how many seats may voluntarily
+enter. This file already calls it the most powerful lever there is - for 2-7 -
+and it had simply never been turned on for badugi: `scripts/badugi.mjs` set
+`maxToDraw: null`, which is why four-handed looked impossible. It now defaults
+to 2 past three-handed, and takes `--max-to-draw`.
+
+| players | nodes | strategy | cards of 52 |
+| --- | --- | --- | --- |
+| 2 | 44,894 | 0.47 GB | 17 |
+| 3 | 119,695 | 1.25 GB | 25 |
+| 4 | 228,171 | 2.39 GB | 33 |
+| 5 | 366,555 | 3.83 GB | 41 |
+| 6 | **534,848** | **5.59 GB** | **49** |
+
+Capped at two entrants the tree grows **roughly with the square of the seat
+count, not exponentially** - six-handed is twelve times heads-up, where each
+extra seat at 2-7 multiplied. That is the whole reason this works: the cap fixes
+how multiway the pot can get, so a seventh seat only adds the branch where it
+folds. The cap does not bind below four-handed, so those two rows are the whole
+game.
+
+**The deck is not the wall here, unlike 2-7 triple draw.** Six-handed wants 49
+of 52 cards - four a seat, plus 2,1,1 replacements and three for the big blind's
+first draw. 2-7 needed 66 at the same seat count and that is what made it
+heads-up only. Badugi's fourth card is the entire difference.
+
+### What each prune is actually worth
+
+Each line turns exactly one thing off, six-handed, so the number is what that
+thing is paying for:
+
+| six-handed | nodes | against baseline |
+| --- | --- | --- |
+| everything on | 534,848 | |
+| anyone may cold call | 561,224 | +5% |
+| cold calling a 3-bet allowed | 534,848 | **nothing at all** |
+| limping allowed | over 6,000,000 | 11x or worse |
+| no cap on who enters | over 6,000,000 | 11x or worse |
+
+**Two of the three rules this file credits are worth nothing once the cap is
+on.** `coldCallThreeBets: false` is worth *exactly* zero - not approximately,
+identically - because with at most two voluntary entrants there is nobody left
+to cold call a 3-bet, so the rule never fires. `coldCallSeats` is worth 5%. The
+section above says the cold-calling rule "is the one that does the work", and
+that was measured uncapped; capped, the cap has already done it. Keep them
+anyway - they cost nothing and they are the right description of the game - but
+do not go looking for savings there.
+
+The knobs that do move it, all six-handed:
+
+| knob | nodes | strategy |
+| --- | --- | --- |
+| 2 bets a round instead of 3 | 148,229 | 1.51 GB |
+| 3 bets a round | 534,848 | 5.59 GB |
+| 4 bets a round | 948,147 | 10.07 GB |
+| one draw | 4,448 | 0.05 GB |
+| two draws | 55,808 | 0.57 GB |
+| three draws | 534,848 | 5.59 GB |
+
+`maxToDraw: 1` builds 26 nodes and is **not a game**: a seat barred from
+entering is barred from raising too, so with no limping the big blind cannot
+even defend and every hand is a walk. That is `mayEnter` gating the raise as
+well as the call, which is deliberate - if you want the pot you have to put it
+up - but it means the cap has exactly one usable value here, and it is 2.
+
+### What it costs to run
+
+The memory is `2 x 1,092 hands x action edges x 4 bytes` - regret and average,
+one float per hand per action at every decision - which is 639,598 edges and so
+5.59 GB. `trackEv: true` adds another `2 x 1,092 x decisions x 4`, or 2.30 GB,
+for the viewer's per-hand price column. `scripts/badugi.mjs` already passes
+`trackEv: false`, and at this size that is not optional.
+
+Measured after the blocks are allocated: **643 iterations a second six-handed,
+so 10M iterations is 4.3 hours**, and 759/s three-handed. The rate during
+the first few thousand iterations is two to three times lower, because
+allocating a block costs more than using one - the run starts at ~200/s and
+climbs as the tree fills in. Do not estimate from the first minute.
+
+### The walls past this, and which is which
+
+This file previously reported four-handed badugi as "out of memory at 11GB",
+which conflated two different limits:
+
+- **Building** four-handed uncapped is fine given a heap: 12,926,216 nodes in 67
+  seconds at `--max-old-space-size=70000`. The old number was the builder
+  hitting a 11GB *flag*, not a machine.
+- **Solving** it is not, and never will be on one box: 12.9M nodes is **138 GB**
+  of strategy tables. The tree fitting says nothing about the solve fitting, and
+  at 1,092 hands a node the second number is the one that decides.
+- **Six-handed at `maxToDraw: 3` cannot be built at all**, at any heap size. It
+  fails with `Map maximum size exceeded` after 82 seconds - V8 caps a `Map` at
+  2^24 entries, and `buildTree`'s `seen` map holds one per distinct state. So
+  there is a hard ceiling of 16.7 million states in the builder that no amount
+  of RAM moves, and going past it means sharding that map across several.
+
+That last one is worth knowing before anyone tries to widen this game: the next
+step up is not expensive, it is unreachable without a change to `buildTree`.
+
+### The big blind's three-card draw was reading the wrong hand
+
+**Fixed, and every badugi solve made before it is wrong on that line.** Worth
+reading before trusting any earlier output, because it is silent and it lands
+on exactly the line the big blind's exception exists to model.
+
+`BadugiSolver` addresses a seat's hand-after-drawing as `depth * 36 + packed`,
+where `packed` is the draw history in radix six, in a block 216 wide a seat. A
+history of three draws packs to a number below `6 ** 3 = 216`, so depth three
+alone needs the full 216 - and `3 * 36 + 115` is **223**, past the end of the
+seat's own block.
+
+Only one line reaches it: the big blind drawing **three** on the first draw,
+which is the only seat allowed to, and then any legal second and third draw.
+What that read depended on the seat count, and neither answer was a hand:
+
+- **Heads-up**, the big blind is the last seat, so slot 223 is index 439 of an
+  array 432 long. `handAfter[439]` is `undefined`, so the hand index is
+  `undefined`, the regret and average offsets are `NaN`, and **every write to
+  them was silently dropped** - that decision never learned anything and
+  returned a uniform strategy for ever. Worse, `valueAfter[439]` is `undefined`
+  too, and `payoff` compares `undefined < best`, which is false. A big blind
+  that drew three **lost every showdown it ever reached, by construction.**
+- **Three-handed and up**, it lands inside the *next* seat's block and reads
+  that seat's hand instead.
+
+So a solve will have learned that drawing three is close to the worst thing
+available, and any reading of "the big blind almost never draws three" is the
+bug talking rather than the game. The stride is now `6 ** rounds` with one block
+a depth, and `test/badugi-solve.test.js` pins both that no reachable history
+overflows and that no two of them collide.
+
+Three things follow. Any stored `data/badugi-*.json` predating this is wrong on
+the draw-three line and should be re-run rather than re-read. The fix changes
+what the solver learns, so it is not comparable with earlier numbers. And the
+general lesson is the one `lib/tree.js` already states about integer chips: an
+index scheme whose bound is not asserted anywhere is one that will quietly go
+out of range, and typed arrays return `undefined` rather than throwing.
+
+### Which cards to throw was a tie-break away from right
+
+`keepFor` settles which cards a draw throws - the strategy decides *how many* -
+by keeping the subset whose own badugi is best. **Measured, that rule is never
+wrong when two keeps score differently**: over 4,000 random hands drawing one,
+the lowest-scoring keep was also the best draw every single time the scores
+disagreed. The rule is sound.
+
+What it could not do is break a tie, and ties are 18% of hands drawing one.
+They happen because **a hand can improve without making a badugi** - the play
+badugi calls *reducing*. Holding A♠ 2♥ 6♦, ten clubs make a badugi, and the
+3♦, 4♦ and 5♦ each replace the six with a lower diamond for a better tri. So
+what a keep can *become* is not what it is worth now, and `score` only sees the
+second.
+
+The clearest case is A♥ 3♦ A♦ 3♠. Every keep of three is a two-card A-3, so
+`score` cannot separate them - but A♥ A♦ 3♠ covers hearts, diamonds and spades
+and either ace can play, so 33 cards make it a tri, while A♥ 3♦ A♦ covers two
+suits and 22 do. **The duplicate ace is dead to the hand's value and live to its
+future.** Taking the first keep in subset order, as it did, cost 1.9 rank places
+of 1,092 on average and up to 50.
+
+Now broken by `reach` - distinct suits first, then distinct ranks - which costs
+0.4 places. The exact tie-break, playing all 48 unseen cards out for every
+candidate, costs nothing and is fifty times the work at a point the walk reaches
+millions of times, so this is the cheap 79% of it. If the draw ever looks wrong
+in a way this could explain, the exact version is a drop-in for `reach`.
+
+This is the badugi counterpart of what `lib/draws.js` does for 2-7, where a keep
+is scored by what it draws to rather than by what it is - the README's
+"8-5-4-3 beats 7-5-4-3 as a draw". Badugi never got that treatment because its
+keeps looked obvious, and 82% of the time they are.
+
+### Opening ranges, and the one thing to check before the level
+
+**Opens must widen from first position to the button.** That is what position
+is, and it is the first thing to check about any badugi solve, before any
+argument about level. A solve that opens the button tighter than UTG is wrong
+whatever its exploitability says.
+
+`lib/badugi-benchmark.js` prices one published teaching range over the deck for
+scale - countingouts.com's - giving roughly 9% / 14% / 24% / 32% for
+UTG / HJ / CO / BTN. **It is not ground truth.** It is one author among several,
+other published ranges disagree in both directions, and nobody has solved this
+game. It is also a six-handed cash standard where this is a 200bb limit game
+with its own prunings, so even a perfect solve should not reproduce it.
+
+Use it the way an order of magnitude is used. A solve opening 38% under the gun
+is wrong on any reading; one opening 11% where this says 9% is a conversation.
+What every range set agrees on is the direction, so the direction is what the
+measurement asserts and the percentages are a band around it.
+
+The deck is why the numbers are low at all: only 6.3% of hands are dealt a
+complete badugi, 57% are three-card hands and 36% are two-card.
+
+### Opens still run backwards six-handed, and the cause is not yet known
+
+Six-handed on fixed code, exploring 2%, opening frequency by seat:
+
+| iterations | UTG | HJ | CO | BTN | SB |
+| --- | --- | --- | --- | --- | --- |
+| 0.25M | 41 | 40 | 38 | 24 | 89 |
+| 0.75M | 34 | 28 | 27 | 22 | 77 |
+| 1.50M | 33 | 29 | 25 | 20 | 76 |
+| 3.00M | 34 | 32 | 27 | 22 | 74 |
+| 5.00M | 32 | 33 | 31 | 26 | 71 |
+
+**Opens must widen from the first seat to the button**, and these do not. The
+level is also about three times any published range. Both are open.
+
+**Read the trend, not the last row.** Every seat behind the first is rising over
+the last three marks - HJ 29 → 32 → 33, CO 25 → 27 → 31, BTN 20 → 22 → 26 -
+while UTG is flat to falling and the small blind is falling steadily. The hijack
+has already passed UTG by 5M. That is what a strategy converging towards the
+right ordering looks like from below, and the button rising slowest is the
+lesson this file already records for 2-7: the button is the seat whose hands are
+worth what they are worth *for how they play after the draw*, and that is the
+part that trains last.
+
+**A four-handed NashConv reading was taken and is not strong enough to settle
+it.** It falls 4.9 → -0.1 → -0.2 bb/100 by two million iterations while the
+ordering stays inverted, which would ordinarily say "converged and still wrong".
+But every seat in that run reported **still moving** at the six-pass cap - the
+best response was changing its mind when it ran out of passes - and a search
+that never settled reporting a gain of zero is a weak search, not a converged
+game. `minimumDeals` is 30 against 1,092 hand values, so at 40,000 training
+deals the root sees about 37 a hand and everything below it sees far less. Rerun
+with more passes and more training deals before quoting that figure.
+
+#### What the cap does, and it is not what was first written here
+
+**The cap makes every pot heads-up, and that is worth four opponents to the
+first seat and one to the button.** Counted off the tree - the most seats that
+can still be in the hand at a showdown under each seat's open:
+
+| opener | capped at two entrants | seats behind it | the cap removes |
+| --- | --- | --- | --- |
+| UTG | 1 | 5 | **4** |
+| HJ | 1 | 4 | 3 |
+| CO | 1 | 3 | 2 |
+| BTN | 1 | 2 | **1** |
+
+Multiway risk is most of what makes early position tight: an open that can be
+called in four places needs a hand that is still good four ways. Take that away
+and the first seat is being priced as though it had the button's problem, while
+the button's own problem barely changes. **So the flat thirty-percent ranges are
+what this game should produce**, and the seat the cap distorts least is the
+button - which is also the one whose number looks most sensible against a range
+a player would actually use.
+
+That is a different argument from the one first written here, which said the cap
+inverted position by leaving posted blinds unable to defend, and counted the
+lines where that happens: 9 for UTG, 7, 5, 1 for the button. **That count is
+real and it is not a mechanism.** Any quantity indexed by position is monotone
+in position, and the dead money those lines create is shared by whoever is in
+the pot rather than collected by the opener. The test in
+`test/badugi-solve.test.js` pins the count as a fact about the tree.
+
+The cap also does *not* reduce how many seats get a **chance** to contest an
+open - it only bites once somebody has entered - so five can still answer UTG
+and two the button. It is the size of the pot they can build, not the number of
+them, that the cap takes away.
+
+An earlier version of this section claimed the cap inverted position, on the
+grounds that the lines where a posted blind is left unable to defend fall away
+monotonically by opener - 9 for UTG, 7, 5, and 1 for the button. That count is
+real and the test in `test/badugi-solve.test.js` pins it. **It is not evidence of
+a mechanism.** Any quantity indexed by position is monotone in position, and the
+dead money those lines create is shared by whoever is in the pot rather than
+collected by the opener. The argument was a correlation dressed as a cause.
+
+**Not ruled out: that barring a posted blind from defending is wrong anyway.**
+Six-handed, 26 of 61 pre-draw decisions are a seat facing a bet with fold as its
+only legal action, and 22 of those are a blind that has money in the pot
+involuntarily. `mayEnter`'s own comment says a blind "is still owed its option",
+and it is owed that only while fewer than `maxToDraw` seats have entered. That
+is a modelling defect on its own terms, whatever it does or does not do to the
+ordering.
+
+The fix as written does not fit: `capExemptsBlinds` in `lib/tree.js`, default
+off, lets a posted blind always answer a raise, and it is over nine million
+nodes at four- and six-handed both, against 228,171 and 534,848. Worth pricing
+instead: **cap cold entries only** - count the seats that chose to come in, so a
+blind defending never counts against the cap. There are only two blinds, so the
+pot stays bounded, and it may fit where full exemption does not.
+
+#### What to do next, in order
+
+1. **Checkpoint badugi solves.** `lib/checkpoint.js` is written against
+   `lib/solve.js`, so a five-hour run cannot be measured afterwards without
+   being redone. Everything below is gated on this.
+2. **Run the exploitability properly** - more passes, more training deals - so
+   "converged" and "still moving" can be told apart at all.
+3. **Then take the ordering seriously.** If the later seats are still climbing,
+   it is iterations. If NashConv has genuinely settled with the ordering still
+   inverted, the modelling questions above are where to look.
+
+### Badugi is a much tighter game than 2-7, and the deck says why
+
+Half of 2-7 is dealt made. Badugi is dealt made one hand in sixteen.
+
+| dealt | 2-7 (no pair, no flush, no straight) | badugi (a complete four-card badugi) |
+| --- | --- | --- |
+| any made hand | **50.16%** | **6.34%** |
+| nine high or better | 2.04% | 1.12% |
+| eight high or better | 0.71% | 0.62% |
+
+Both numbers are recomputed from the deck by enumeration, not quoted. The top
+of each game is comparably rare - a pat nine and a nine-high badugi are both
+about one hand in fifty to a hundred - but **the base is eight times apart.**
+In 2-7 a coin flip says you have already made something, however bad. In badugi
+you are drawing 94% of the time, and drawing to a badugi is ten outs of 48,
+about 21% a draw.
+
+That is the whole reason a badugi opening range is a list rather than a
+threshold. Two-card hands are 35.6% of the deck and the button opens **seven of
+them** - A2, A3, 23, A4, A5, 24, 25 - which is 22% of the two-card hands and
+7.8% of all hands. A holding that needs two more cards is close to unplayable
+here, where in 2-7 the equivalent is a routine draw.
+
+It also predicts the shape the solver could not produce. A game where most hands
+are drawing and draws are thin is a game where position and pot size matter
+more than usual, because a drawing hand needs to get paid when it hits and to
+fold cheaply when it does not - which is exactly what the entry cap flattens by
+making every pot heads-up.
+
+### Presetting the opens buys exact subgames, up to two seats deep
+
+If the opening ranges are fixed rather than solved, the spots after them can be
+solved **with no entry cap at all** - which is worth doing, because the cap is
+the one prune in this game whose effect on the answer nobody can characterise.
+
+`buildTree(config, from)` now takes a state to build from, and `stateAfter`
+produces one from a named line, checked against the same `legalActions` the tree
+would have offered. Six-handed, uncapped, by how many seats still have a
+decision once the opener has raised:
+
+| seats still to act | line | nodes | strategy |
+| --- | --- | --- | --- |
+| 1 | folds to the big blind | 44,894 | 0.5 GB |
+| 2 | folds to the small blind | 74,800 | 0.8 GB |
+| 3 | folds to the button | 12,806,520 | 136.9 GB |
+| 4 | folds to the cut-off | 12,836,428 | 137.2 GB |
+
+**The cliff is between two seats and three, and it is a factor of 171.** A
+looser cap does not soften it: `maxToDraw: 3` gives the identical numbers at
+three and four seats, because with three behind the pot can only get four-way
+anyway and a cap of three barely binds.
+
+So, concretely:
+
+- **Big blind defence: yes, exactly, against any opener.** 44,894 nodes and
+  0.5 GB is the size of the whole heads-up game, which already solves in minutes.
+- **The small blind's 3-bet: yes.** 74,800 nodes, 0.8 GB.
+- **A 3-bet from the button, cut-off or hijack: no.** Three or more seats still
+  behind is 137 GB of strategy tables, which is more than the machine has, and
+  removing the cap is what caused that.
+
+Those two affordable cases are not a small slice. Every "folded around to the
+blinds" spot is in them, and that is where most of the hands that reach a draw
+actually come from once opens are this tight.
+
+**The piece that is missing, and it is not optional.** `BadugiSolver.run` deals
+every seat uniformly from a full deck. A subgame built after "UTG opens" would
+therefore have the big blind defending against a *random* hand rather than
+against an opening range, and the answer would look entirely reasonable while
+being about a different game. Solving from a fixed line requires dealing the
+seats that have already acted from the range that action implies - weighted
+sampling over the 1,092 values, or rejection sampling against the preset - and
+that has to exist before any of the numbers above are worth computing.
+
+The order of work, then: range-conditioned dealing first, then the big blind
+defence subgame as the cheapest exact thing this repo can produce, then the
+small blind's 3-bet. The three-seat spots stay capped, or wait for values fed
+back from the subgames below them - which is the iterate-the-subgames route
+`lib/rollout.js` names in its own header for 2-7, and is the same answer here.
+
+### Before trusting a number out of it
+
+A six-handed smoke run, opening frequency for UTG / HJ / CO / BTN / SB:
+
+| iterations | UTG | HJ | CO | BTN | SB |
+| --- | --- | --- | --- | --- | --- |
+| 100,000 | 53 | 57 | 56 | 31 | 82 |
+| 200,000 | 38 | 38 | 34 | 23 | 90 |
+
+**Those are not results**, and the table is here to show why rather than to be
+read. Every number moved by fifteen to twenty points on one doubling, and the
+button is tighter than UTG in both rows, which is backwards. That is the
+signature this file already names: an information set that has not been visited
+enough still sits on its uniform start, and a few hundred thousand iterations
+over 534,848 nodes is a handful of visits each. The run was a smoke test that
+the six-handed config solves at all, and that is all it established.
+
+So the same discipline as 2-7 applies before any of it is read: exploitability
+rather than eyeballing, `--explore` so lines the strategy avoids still train,
+and visit counts printed beside any strategy that gets quoted. There is no
+`exploitability.mjs` for badugi yet - `lib/exploitability.js` is written against
+the 2-7 solver - and that, not more iterations, is the thing to build first.
 
 ## What I would do next
 
@@ -419,3 +832,18 @@ between a first pass that is large and one that is twice as large.
    a page over data that is already computed, and the solve is worth having
    first. Badugi is easier to rank than 2-7 - size then lowness, with no draw
    policy to agree on - so most of `lib/ranking.js` has no counterpart here.
+9. **Exploitability for badugi**, before six-handed is run for real. Four hours
+   of solving produces a strategy nothing can currently check: the smoke run
+   above opens the button tighter than UTG, which is either a starved
+   information set or a bug, and there is no measurement in the repo that tells
+   those apart for this game. `lib/exploitability.js` is written against
+   `lib/solve.js` - coarse buckets, one draw, `optionBucket[seat * 3 + draws]` -
+   so this is a second implementation against `BadugiSolver`, not a parameter.
+   It is the one thing worth building before the long run rather than after it,
+   because badugi is the game whose whole purpose is being checkable.
+10. **Shard `buildTree`'s `seen` map** if the game ever needs to be wider than
+   `maxToDraw: 2`. V8 caps a `Map` at 2^24 entries and six-handed at
+   `maxToDraw: 3` hits that ceiling after 82 seconds, at any heap size. This is
+   only worth doing if something actually needs it - and note that the tree
+   fitting is not the question, since 12.9M nodes is 138 GB of strategy tables
+   at 1,092 hands a node, so the solve would not fit on one machine anyway.
