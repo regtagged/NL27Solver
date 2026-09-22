@@ -29,6 +29,7 @@ import { stateAfter, positionNames, DRAWING } from '../lib/tree.js';
 import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, handFacts } from '../lib/badugi-benchmark.js';
 import { loadBadugi } from '../lib/badugi-checkpoint.js';
+import { SPOTS } from '../lib/badugi-spots.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -37,11 +38,6 @@ const flag = (name, fallback) => {
   return at >= 0 && at + 1 < argv.length ? argv[at + 1] : fallback;
 };
 
-const SPOTS = {
-  'btn-bb': { line: ['fold', 'fold', 'fold', 'raise', 'fold'], over: {} },
-  'sb-3bet': { line: ['fold', 'fold', 'fold', 'raise'], over: { maxToDraw: 2 } },
-  'bb-3bet': { line: ['fold', 'fold', 'fold', 'raise', 'fold', 'raise'], over: {} },
-};
 
 const key = flag('spot', 'btn-bb');
 const spot = SPOTS[key];

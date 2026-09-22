@@ -69,6 +69,13 @@
     border-color: var(--accent); color: var(--ink);
     box-shadow: 0 0 0 1px var(--accent) inset;
   }
+  /* A branch heading breaks the row of decisions, so the snows read as a line
+     of their own rather than as more of the main line. */
+  .branch {
+    flex: 0 0 100%; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600; margin: 8px 0 0;
+  }
+  .branch:first-child { margin-top: 0; }
   .step .who { display: block; font-weight: 600; color: inherit; }
   .step .mix { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
 
@@ -125,6 +132,16 @@
 
   /* How far a class disagrees with itself, on the class row - the reason to
      open one, shown without having to open every one. */
+  .solve { display: flex; align-items: stretch; gap: 0; }
+  .solve .step { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .vs {
+    border: 1px solid var(--line); border-left: 0; background: var(--panel);
+    color: var(--ink-3); border-radius: 0 9px 9px 0; padding: 0 11px;
+    cursor: pointer; font: inherit; font-size: 11px;
+  }
+  .vs:hover { color: var(--ink); border-color: var(--accent); }
+  .vs.on { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
   .split {
     margin-left: 8px; font-size: 10px; font-weight: 600; padding: 1px 5px;
     border-radius: 999px; color: var(--pat); border: 1px solid var(--pat);
@@ -154,6 +171,11 @@
     <p class="note" style="padding: 0 14px 14px; margin: 0;" id="caveat"></p>
   </div>
 
+  <div class="panel" id="solvesPanel" hidden>
+    <h2>Solves — pick one to read, and one to compare it against</h2>
+    <div class="line" id="solves"></div>
+  </div>
+
   <div class="panel">
     <h2>The line — click a decision to read it</h2>
     <div class="line" id="line"></div>
@@ -161,14 +183,26 @@
 
   <div class="panel">
     <h2 id="tableTitle">Range</h2>
+    <p class="note" id="path" style="padding: 10px 14px 0; margin: 0;"></p>
     <div class="legend" id="legend"></div>
     <div class="body" style="padding-top: 0;">
       <table>
         <thead>
-          <tr><th>Hand</th><th>% of deck</th><th style="text-align:left">Strategy</th><th id="h1"></th><th id="h2"></th><th id="h3"></th><th id="h4"></th></tr>
+          <tr><th>Hand</th><th id="hShare">% of range</th><th style="text-align:left">Strategy</th><th id="h1"></th><th id="h2"></th><th id="h3"></th><th id="h4"></th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
+      <p class="note" style="margin: 12px 0 0;">
+        <strong>Monotone</strong> is four cards of one suit &mdash; 2,860 combinations, 1.06% of
+        the deck. Only its lowest card plays, so it is never a badugi and cannot become one
+        without drawing: <strong>every pat a monotone hand makes is a snow</strong>, which is
+        what makes it the row to look at on the three-bet-and-pat line. There are none above a
+        ten (a monotone ten already needs the J, Q and K of its suit), so those three rows are
+        the four-of-a-kind hands instead &mdash; one combination each, and the solver has
+        barely seen them. Every monotone row carries its own quads too: four aces and
+        A&hearts;2&hearts;5&hearts;9&hearts; show down as the same hand, and strategy here is
+        indexed by what a hand shows down as.
+      </p>
     </div>
   </div>
 </main>
@@ -183,16 +217,51 @@ let data = null, at = 0;
 function classOf(action) {
   if (action.kind === 'fold') return 'fold';
   if (action.kind === 'call' || action.kind === 'check') return 'call';
-  if (action.kind === 'draw') return ['pat','draw1','draw2','draw3'][action.option] || 'draw3';
-  if (action.label === 'pat') return 'pat';
-  const m = /^d(\d)$/.exec(action.label);
-  if (m) return ['pat','draw1','draw2','draw3'][Number(m[1])] || 'draw3';
+  if (action.kind === 'draw' || action.label === 'pat' || /^d\d$/.test(action.label)) {
+    // How many cards, from the action itself or from what it is called. The
+    // report did not carry `option` until recently, and without this every
+    // draw fell through to the same grey: a table of pat, d1, d2 and d3 whose
+    // bars were four shades of one colour.
+    const taken = action.option ?? (action.label === 'pat' ? 0 : Number(action.label.slice(1)));
+    return ['pat', 'draw1', 'draw2', 'draw3'][taken] ?? 'draw3';
+  }
   return 'raise';
 }
 
+/* What a hand value is called.
+
+   A one-card value is a monotone hand: four cards of one suit, of which only
+   the lowest plays. It is named that way because it is the thing a player is
+   looking for - a hand that cannot be a badugi and cannot become one without
+   drawing, so every pat it ever makes is a snow.
+
+   Above a ten there are no monotone hands - a monotone T needs three higher
+   ranks in its suit and a monotone J has only two - so those three values are
+   quads and nothing else. The other ten rows each carry their own quads too,
+   one combination apiece, because four aces and A-2-5-9 of spades show down as
+   the same hand and the solver indexes strategy by what a hand shows down as. */
+function nameOf(hand) {
+  if (hand.size >= 3) return `${NAME[hand.ranks[0]]}-high ${SIZE[hand.size]}`;
+  if (hand.size === 2) return `two-card ${hand.ranks.map((r) => NAME[r]).reverse().join('')}`;
+  return hand.ranks[0] <= 9 ? `monotone ${NAME[hand.ranks[0]]}` : `quads ${NAME[hand.ranks[0]]}`;
+}
+
+/* What a hand is worth at this decision: how often it is dealt, times how often
+   it is still here.
+
+   Without the second half a table is a lie by averaging. The button folded
+   every queen-high tri before the first card was drawn, so weighting its rows
+   by the deck mixes in a strategy it never plays - and the solver only ever
+   trained those rows on exploration traffic, which is noise wearing a number.
+   `reach` is absent where it cannot be had (see the report), and then this is
+   the deck and the page says so. */
+const weightOf = (spot, i) => data.hands[i].combos
+  * (spot.reach ? spot.reach[i] : (spot.seen ? spot.seen[i] : 1));
+
 /* The 1,092 values grouped the way hands are talked about: badugis and tris by
-   their high card, two-card holdings by name. Weighted by combinations, so a
-   row is what happens at the table and not an average over distinct values.
+   their high card, two-card and monotone holdings by name. Weighted as above,
+   so a row is what happens at the table and not an average over distinct
+   values.
 
    Each row keeps the hands inside it, because a class is a summary and the
    summary is where the disagreements hide: 9-6-5 and 9-8-7 are both a nine-high
@@ -200,17 +269,20 @@ function classOf(action) {
 function grouped(spot) {
   const rows = new Map();
   data.hands.forEach((hand, i) => {
-    const key = hand.size >= 3
-      ? `${NAME[hand.ranks[0]]}-high ${SIZE[hand.size]}`
-      : `${SIZE[hand.size]} ${hand.ranks.map((r) => NAME[r]).reverse().join('')}`;
+    const key = nameOf(hand);
     if (!rows.has(key)) {
-      rows.set(key, { key, size: hand.size, ranks: hand.ranks, combos: 0, members: [],
-        w: spot.actions.map(() => 0) });
+      rows.set(key, { key, size: hand.size, ranks: hand.ranks, combos: 0, dealt: 0,
+        members: [], w: spot.actions.map(() => 0) });
     }
     const row = rows.get(key);
-    row.combos += hand.combos;
-    row.members.push(i);
-    spot.actions.forEach((_, a) => { row.w[a] += hand.combos * spot.hands[i][a]; });
+    const weight = weightOf(spot, i);
+    row.combos += weight;
+    row.dealt += hand.combos;
+    // A hand that cannot be here is not one of the hands inside the class, so
+    // it is not in the drill-down and does not count towards the class's
+    // disagreement with itself.
+    if (weight > 0) row.members.push(i);
+    spot.actions.forEach((_, a) => { row.w[a] += weight * spot.hands[i][a]; });
   });
   return [...rows.values()].sort((x, y) => (y.size - x.size)
     || (x.ranks[0] - y.ranks[0]) || ((x.ranks[1] ?? 0) - (y.ranks[1] ?? 0)));
@@ -255,6 +327,18 @@ function render() {
   const spot = data.spots[at];
   document.getElementById('tableTitle').textContent = spot.what;
 
+  // Where this decision sits, and what its numbers are weighted by - which is
+  // the difference between "of the hands that are here" and "of the deck".
+  document.getElementById('hShare').textContent = spot.reach ? '% of range' : '% of deck';
+  document.getElementById('path').innerHTML = [
+    spot.path ? `<strong>${spot.path}</strong>` : '<strong>the first decision</strong>',
+    spot.branch ? ` &mdash; ${spot.branch}` : '',
+    spot.reach ? '' : ' &mdash; <span class="warn">weighted by the deck: this seat has '
+      + 'drawn, so the hand it holds is not the hand it was dealt and reach cannot be '
+      + 'carried through the draw. Hands the solve never saw here are dropped, but what '
+      + 'is left is how often a hand is dealt, not how often it arrives.</span>',
+  ].join('');
+
   document.getElementById('legend').innerHTML = spot.actions
     .map((a) => `<span><i class="swatch ${classOf(a)}"></i>${a.label}</span>`)
     .join('');
@@ -263,8 +347,13 @@ function render() {
     document.getElementById(id).textContent = spot.actions[i] ? spot.actions[i].label : '';
   });
 
-  const rows = grouped(spot);
-  const total = rows.reduce((s, r) => s + r.combos, 0);
+  const all = grouped(spot);
+  const total = all.reduce((s, r) => s + r.combos, 0);
+  // A class that never arrives is not a row - that is how a five-high badugi
+  // ends up in a table of hands that all three-bet before the draw. The test is
+  // how much of the class gets here, never how big the class is: a monotone
+  // nine is 0.006% of the deck and belongs in the table whenever it is live.
+  const rows = all.filter((r) => r.dealt > 0 && r.combos / r.dealt >= 0.002);
   const blanks = '<td></td>'.repeat(4 - spot.actions.length);
   let lastSize = null;
   const html = [];
@@ -272,7 +361,16 @@ function render() {
   rows.forEach((r, index) => {
     const start = lastSize !== null && r.size !== lastSize ? ' group-start' : '';
     lastSize = r.size;
-    const cells = spot.actions.map((_, i) => `<td>${(100 * r.w[i] / r.combos).toFixed(1)}%</td>`).join('');
+    const cells = spot.actions.map((_, i) => {
+      const mine = 100 * r.w[i] / r.combos;
+      if (!versus) return `<td>${mine.toFixed(1)}%</td>`;
+      let theirs = 0;
+      for (const h of r.members) theirs += weightOf(spot, h) * (versus.spots[at]?.hands[h]?.[i] ?? 0);
+      const d = (100 * theirs / r.combos) - mine;
+      const sign = d >= 0 ? '+' : '';
+      const tone = Math.abs(d) < 0.5 ? 'var(--ink-3)' : d > 0 ? 'var(--call)' : 'var(--raise)';
+      return `<td>${mine.toFixed(1)}% <span style="color:${tone};font-size:11px">${sign}${d.toFixed(1)}</span></td>`;
+    }).join('');
     const gap = spread(spot, r.members);
     const single = r.members.length === 1;
     // A class with one hand in it has nothing to open; the two-card holdings
@@ -297,7 +395,7 @@ function render() {
         const inner = spot.actions.map((_, a) => `<td>${(100 * mix[a]).toFixed(1)}%</td>`).join('');
         html.push(`<tr class="member" data-of="${index}" hidden>`
           + `<td class="hand">${cardsOf(hand)}</td>`
-          + `<td class="combos">${(100 * hand.combos / total).toFixed(3)}%</td>`
+          + `<td class="combos">${(100 * weightOf(spot, i) / total).toFixed(3)}%</td>`
           + `<td class="strategy"><div class="bar">${barOf(spot, mix.map((v) => v), 1)}</div></td>`
           + `${inner}${blanks}</tr>`);
       }
@@ -305,7 +403,10 @@ function render() {
   });
   document.getElementById('rows').innerHTML = html.join('');
 
-  [...document.querySelectorAll('.step')].forEach((el, i) => {
+  // Scoped to the line: the solve switcher's buttons are steps too, and an
+  // unscoped selector marks the decision two places up the row from the one
+  // being read.
+  [...document.querySelectorAll('#line .step')].forEach((el, i) => {
     el.setAttribute('aria-current', String(i === at));
   });
   open.forEach((index) => toggle(index, true));
@@ -340,7 +441,8 @@ document.getElementById('rows').addEventListener('keydown', (event) => {
 });
 
 async function start() {
-  const response = await fetch('/api/badugi');
+  const which = new URLSearchParams(location.search).get('spot') || 'btn-bb';
+  const response = await fetch('/api/badugi?spot=' + which);
   const body = await response.json();
   if (!body.running) {
     document.getElementById('title').textContent = 'No badugi solve yet';
@@ -365,10 +467,19 @@ async function start() {
     + 'played to showdown. The button&rsquo;s opening range is an assumption the solve inherits rather '
     + 'than tests &mdash; change it and every number here changes.';
 
-  document.getElementById('line').innerHTML = body.spots.map((s, i) =>
-    `<button class="step" data-i="${i}"><span class="who">${s.what}</span>`
-    + `<span class="mix">${s.actions.map((a, j) => `${a.label} ${s.overall[j].toFixed(0)}%`).join(' · ')}</span></button>`
-  ).join('');
+  // Branches are lines nobody continues on - the snows - so they are labelled
+  // and set apart rather than run on from the main line as though a player
+  // would reach them by calling.
+  let branch;
+  document.getElementById('line').innerHTML = body.spots.map((s, i) => {
+    const head = s.branch !== branch
+      ? `<div class="branch">${s.branch ? s.branch : 'the line everyone continues on'}</div>`
+      : '';
+    branch = s.branch;
+    return head
+      + `<button class="step" data-i="${i}"><span class="who">${s.what}</span>`
+      + `<span class="mix">${s.actions.map((a, j) => `${a.label} ${s.overall[j].toFixed(0)}%`).join(' · ')}</span></button>`;
+  }).join('');
   document.getElementById('line').addEventListener('click', (event) => {
     const button = event.target.closest('.step');
     if (!button) return;
@@ -389,7 +500,8 @@ async function start() {
 async function watch() {
   if (!data) return;
   try {
-    const response = await fetch('/api/badugi');
+    const which = new URLSearchParams(location.search).get('spot') || 'btn-bb';
+    const response = await fetch('/api/badugi?spot=' + which);
     const body = await response.json();
     if (!body.running || body.iterations === data.iterations) return;
 
@@ -410,7 +522,153 @@ async function watch() {
   }
 }
 
-start().then(() => setInterval(watch, 15000));
+start().then(() => loadSolves()).then(() => setInterval(watch, 15000));
+</script>
+<script>
+/**
+ * Reading one solve against another.
+ *
+ * An experiment - a nodelock, a different range - is a separate solve of the
+ * same spot, so comparing them is a matter of loading both and showing the
+ * difference rather than of re-solving anything. The bars stay the solve being
+ * read; the numbers gain a delta column, because a strategy is read as a shape
+ * and a difference is read as a number.
+ */
+let versus = null;
+let solves = [];
+
+function deltaOf(spotIndex, handIndex, action) {
+  if (!versus) return null;
+  const other = versus.spots[spotIndex];
+  if (!other || !other.hands[handIndex]) return null;
+  return other.hands[handIndex][action] - data.spots[spotIndex].hands[handIndex][action];
+}
+
+async function loadSolves() {
+  try {
+    const list = await (await fetch('/api/badugi-solves')).json();
+    solves = list.solves || [];
+  } catch { solves = []; }
+  if (solves.length < 2) return;
+  const panel = document.getElementById('solvesPanel');
+  panel.hidden = false;
+  const current = new URLSearchParams(location.search).get('spot') || 'btn-bb';
+  // Two affordances per solve, because they are different questions: which
+  // strategy am I looking at, and what am I measuring it against. Conflating
+  // them meant clicking a locked run showed the baseline's bars with a delta
+  // beside them, which is the one thing a lock should never look like.
+  document.getElementById('solves').innerHTML = solves.map((name) => {
+    const reading = name === current;
+    const compared = versus && versus.spot === name;
+    return '<div class="solve">'
+      + '<button class="step" data-read="' + name + '" aria-current="' + reading + '">'
+      + '<span class="who">' + name + '</span>'
+      + '<span class="mix">' + (reading ? 'reading this' : 'click to read') + '</span>'
+      + '</button>'
+      + (reading ? '' : '<button class="vs' + (compared ? ' on' : '') + '" data-vs="' + name + '">'
+        + (compared ? 'comparing' : 'compare') + '</button>')
+      + '</div>';
+  }).join('');
+  document.getElementById('solves').onclick = async (event) => {
+    const read = event.target.closest('[data-read]');
+    if (read) { location.search = '?spot=' + read.dataset.read; return; }
+    const vs = event.target.closest('[data-vs]');
+    if (!vs) return;
+    const name = vs.dataset.vs;
+    if (versus && versus.spot === name) { versus = null; } else {
+      const body = await (await fetch('/api/badugi?spot=' + name)).json();
+      versus = body.running ? body : null;
+    }
+    loadSolves();
+    render();
+  };
+}
+
+/**
+ * Watch a solve while it runs.
+ *
+ * The run rewrites its report on a clock, so the page re-reads it and redraws
+ * only when the iteration count has moved - redrawing on every poll would throw
+ * away the row you were reading. The decision you have selected is kept, since
+ * watching one decision settle is the reason to have this at all.
+ */
+async function watch() {
+  if (!data) return;
+  try {
+    const which = new URLSearchParams(location.search).get('spot') || 'btn-bb';
+    const response = await fetch('/api/badugi?spot=' + which);
+    const body = await response.json();
+    if (!body.running || body.iterations === data.iterations) return;
+
+    const wasComplete = body.complete;
+    data = body;
+    document.getElementById('meta').textContent =
+      `${body.iterations.toLocaleString()} iterations${wasComplete ? '' : ' so far'}`;
+    document.getElementById('line').querySelectorAll('.step').forEach((button, i) => {
+      const spot = body.spots[i];
+      if (!spot) return;
+      button.querySelector('.mix').textContent = spot.actions
+        .map((a, j) => `${a.label} ${spot.overall[j].toFixed(0)}%`).join(' · ');
+    });
+    render();
+  } catch {
+    // A poll that fails is a server restart or a half-written file; the next
+    // one will do. Nothing here is worth interrupting the page for.
+  }
+}
+
+start().then(() => loadSolves()).then(() => setInterval(watch, 15000));
+</script>
+<script>
+/**
+ * Reading one solve against another.
+ *
+ * An experiment - a nodelock, a different range - is a separate solve of the
+ * same spot, so comparing them is a matter of loading both and showing the
+ * difference rather than of re-solving anything. The bars stay the solve being
+ * read; the numbers gain a delta column, because a strategy is read as a shape
+ * and a difference is read as a number.
+ */
+let versus = null;
+let solves = [];
+
+function deltaOf(spotIndex, handIndex, action) {
+  if (!versus) return null;
+  const other = versus.spots[spotIndex];
+  if (!other || !other.hands[handIndex]) return null;
+  return other.hands[handIndex][action] - data.spots[spotIndex].hands[handIndex][action];
+}
+
+async function loadSolves() {
+  try {
+    const list = await (await fetch('/api/badugi-solves')).json();
+    solves = list.solves || [];
+  } catch { solves = []; }
+  if (solves.length < 2) return;
+  const panel = document.getElementById('solvesPanel');
+  panel.hidden = false;
+  const current = new URLSearchParams(location.search).get('spot') || 'btn-bb';
+  document.getElementById('solves').innerHTML = solves.map((name) => {
+    const reading = name === current;
+    const compared = versus && versus.spot === name;
+    return `<button class="step" data-solve="${name}" aria-current="${reading}">`
+      + `<span class="who">${name}${reading ? '  (reading)' : ''}</span>`
+      + `<span class="mix">${compared ? 'comparing against this' : reading ? '' : 'click to compare'}</span>`
+      + `</button>`;
+  }).join('');
+  document.getElementById('solves').addEventListener('click', async (event) => {
+    const button = event.target.closest('.step');
+    if (!button) return;
+    const name = button.dataset.solve;
+    if (name === current) { location.search = `?spot=${name}`; return; }
+    if (versus && versus.spot === name) { versus = null; } else {
+      const body = await (await fetch(`/api/badugi?spot=${name}`)).json();
+      versus = body.running ? body : null;
+    }
+    loadSolves();
+    render();
+  });
+}
 </script>
 </body>
 </html>

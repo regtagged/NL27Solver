@@ -10,7 +10,7 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { extname, join, normalize, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -301,6 +301,22 @@ const server = createServer(async (request, response) => {
     const body = JSON.parse(readFileSync(file));
     const { hands } = handFacts();
     return json(response, { running: true, ...body, hands });
+  }
+
+  /**
+   * Which badugi solves are on disk, so the viewer can offer them rather than
+   * be told about them. A labelled variant - an experiment - is a file beside
+   * the run it varies, and this is what makes it findable.
+   */
+  if (url.pathname === '/api/badugi-solves') {
+    const dir = resolve(here, 'data');
+    const found = existsSync(dir)
+      ? readdirSync(dir)
+        .filter((name) => /^badugi-.+.json$/.test(name))
+        .map((name) => name.replace(/^badugi-|.json$/g, ''))
+        .filter((name) => !/^d+p$/.test(name))
+      : [];
+    return json(response, { solves: found });
   }
 
   if (url.pathname === '/api/ranked') {

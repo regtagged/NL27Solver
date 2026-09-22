@@ -781,6 +781,81 @@ and visit counts printed beside any strategy that gets quoted. There is no
 `exploitability.mjs` for badugi yet - `lib/exploitability.js` is written against
 the 2-7 solver - and that, not more iterations, is the thing to build first.
 
+### A mixed frequency is a claim, and it is checkable
+
+The 40M btn-bb solve plays a monotone ace - four cards of one suit - as a
+51/49 three-bet. Standing at the table that reads as a mix. It is not one: the
+button folds to a three-bet **0%** of the time, so the extra bets go in dead
+with a one-card hand, and forcing the action to see what each is worth gives
+call **-87**, raise **-104**, a gap of 16 +/- 7 bb/100. The frequency had not
+converged. A hand dealt 0.3% of the time is sampled 0.3% of the time, and where
+the regret difference is smaller than the noise in those samples the average
+strategy never settles - it wanders, and the wandering is what gets printed.
+
+`scripts/badugi-action.mjs` prices one hand: deal until the seat holds it, force
+each action, play the rest out of the average strategies on the same cards.
+`scripts/badugi-sweep.mjs` does the whole first decision in one pass - deal, play
+every action, file the result under whatever the big blind was dealt. Two million
+deals is under four minutes. Differences are paired through the covariance rather
+than treated as independent, which would overstate the error by about half.
+
+At the root, of 112 classes: **83 settled, 13 measurably off, 16 too rare to
+judge**. Weighted by how often they are dealt, the thirteen give up **0.9 bb/100**
+of a decision worth -55.4 - so the shape is right and the boundary is not. The
+sweep reconstructs -55.4 against `badugi-ev.mjs`'s independent -55.7 +/- 0.9,
+which is the check that the two code paths describe the same game.
+
+The errors have a direction. High tris **over-fold** (J-high folds 27% where
+calling is better by 8, Q-high 34% by 3); three junk two-card holdings
+**over-call** (29, 49, 4K, losing 12 to 19 against folding); a few hands raise
+where they should call (6- and 7-high tri, J-high badugi, A3). The genuine mixes
+look different and survive: Q-high badugi at 34/66 and K-high at 43/57 measure
+2 +/- 8 apart, which is what indifference looks like from the inside.
+
+**This retracts something.** The composition of the three-bet-and-pat range is
+sound - 97.5% real badugis, with J-K-high badugis doing the fold-equity work at
+59% of it - but the pure bluffs in it were reported as two-card 29/39/4T, and
+those hands measure as losing defends before they ever get to pat. The tail was
+a frequency that had not settled, quoted as strategy.
+
+The discipline that follows: **do not read a rare class's frequency without
+pricing it.** Exploitability says a strategy is close overall; it does not say
+which rows in the table are real, and the thin rows are exactly the ones a
+reader finds interesting.
+
+### What the reports carry now, and the snow
+
+`lib/badugi-report.js` holds the walk and the file shape, so a report can be
+regenerated from a checkpoint without re-solving - `scripts/badugi-report.mjs`,
+which never writes a checkpoint. Two things came with it.
+
+**Reach.** Every spot carries the weight each hand has when the line arrives:
+the preset range it had to be in, times that seat's own choices along the way.
+Without it the class summaries average in strategies the seat never plays - the
+button folded every queen-high tri before the first card was drawn, and those
+rows were trained on exploration traffic. It moved the first draw from
+`pat 8.3%` to `pat 1.8%`. The product is only sound while the seat has not
+drawn: a hand's strategy is indexed by its value and drawing changes the value,
+so reach is dropped at the first card taken and the viewer says so. What is left
+there is which hands the solve ever saw at that node, which still removes the
+impossible ones.
+
+**Branches.** The walk follows the calls, so it never reaches a hand that
+three-bets and then stands pat - and that hand is the snow. `lib/badugi-spots.js`
+names two of them for `btn-bb`, and `scripts/badugi-snow.mjs` finds the hands by
+playing deals out.
+
+Measured over 250,000 deals: the big blind three-bets 10.4%, draws one half the
+time, misses 79% of those, and pats 7.3% of the misses. **Which misses pat is
+the finding.** A ten-high tri pats 49% and a jack-high 74%, and once they pat
+they never draw again (519 of 540); a four- or five-high tri pats under 2%. The
+rule is that a hand snows when its *draw* is worthless, not when its *hand* is:
+a ten-high tri that hits makes a ten-high badugi that loses to the calling range
+anyway, while a five-high tri that hits wins the pot. A monotone hand - which
+can never be a badugi, and is the hand a player would guess snows - pats **0%**
+of the time at every node where it is live, because an ace with three fresh
+cards is the best draw in the deck.
+
 ## What I would do next
 
 1. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
@@ -841,7 +916,13 @@ the 2-7 solver - and that, not more iterations, is the thing to build first.
    so this is a second implementation against `BadugiSolver`, not a parameter.
    It is the one thing worth building before the long run rather than after it,
    because badugi is the game whose whole purpose is being checkable.
-10. **Shard `buildTree`'s `seen` map** if the game ever needs to be wider than
+10. **Sweep the later decisions the way the first one is swept.** `badugi-sweep.mjs`
+   prices the root only, and the root is the decision with the most traffic - the
+   draws and the post-draw betting are thinner and have had no such check. The
+   walk generalises: force the action at any node and play the rest out. What it
+   needs is a way to condition the deal on arriving there, which for anything
+   past a draw is rejection sampling and therefore slow.
+11. **Shard `buildTree`'s `seen` map** if the game ever needs to be wider than
    `maxToDraw: 2`. V8 caps a `Map` at 2^24 entries and six-handed at
    `maxToDraw: 3` hits that ceiling after 82 seconds, at any heap size. This is
    only worth doing if something actually needs it - and note that the tree

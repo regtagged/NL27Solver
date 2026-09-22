@@ -19,6 +19,10 @@
     "badugi": "node --max-old-space-size=12000 scripts/badugi.mjs",
     "badugi:exploitability": "node --max-old-space-size=16000 scripts/badugi-exploitability.mjs",
     "badugi:subgame": "node --max-old-space-size=20000 scripts/badugi-subgame.mjs",
+    "badugi:action": "node --max-old-space-size=24000 scripts/badugi-action.mjs",
+    "badugi:sweep": "node --max-old-space-size=24000 scripts/badugi-sweep.mjs",
+    "badugi:report": "node --max-old-space-size=24000 scripts/badugi-report.mjs",
+    "badugi:snow": "node --max-old-space-size=24000 scripts/badugi-snow.mjs",
     "badugi:show": "node scripts/badugi-show.mjs"
   },
   "engines": {

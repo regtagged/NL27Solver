@@ -48,11 +48,14 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { stateAfter, positionNames, preDrawOrder, DRAWING } from '../lib/tree.js';
+import { stateAfter, positionNames, preDrawOrder } from '../lib/tree.js';
 import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, rangeByShare, describeRange } from '../lib/badugi-benchmark.js';
 import { badugiTable } from '../lib/badugi.js';
+import { handFacts } from '../lib/badugi-benchmark.js';
 import { saveBadugi, loadBadugi } from '../lib/badugi-checkpoint.js';
+import { walkSpots, buildReport } from '../lib/badugi-report.js';
+import { SPOTS } from '../lib/badugi-spots.js';
 import { runParallel, defaultWorkers } from '../lib/badugi-parallel.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -62,46 +65,6 @@ const flag = (name, fallback) => {
   return at >= 0 && at + 1 < argv.length ? argv[at + 1] : fallback;
 };
 const number = (name, fallback) => Number(flag(name, fallback));
-
-/**
- * The spots after a button open: the line that leads to each, what to do with
- * the prunings there, and which action to follow when walking the decisions
- * worth reporting.
- *
- * **`sb-3bet` starts before the small blind acts**, so its 3-betting range is
- * solved rather than assumed - what it 3-bets is the point of the spot, and a
- * line beginning after the 3-bet can never say. That leaves three seats live,
- * which does not fit uncapped: over 25 million nodes against 974,539 with the
- * entry cap at two. **The cap is doing something real to that answer.** Once
- * the small blind comes in the big blind may not, so the range is solved as
- * though nobody can come along behind, which makes it wider than one facing a
- * live big blind. That is the price of having the decision in the tree at all,
- * and it is worth paying only because the alternative is not having it.
- *
- * `btn-bb` needs no cap - folded to the big blind, two seats are left - and it
- * **already contains the big blind's 3-betting range**: the raise at its first
- * decision is that 3-bet. `bb-3bet` is the other side of the same thing, the
- * button answering it.
- */
-const SPOTS = {
-  'btn-bb': {
-    what: 'BTN vs BB, single raised pot',
-    line: ['fold', 'fold', 'fold', 'raise', 'fold'],
-    over: {},
-  },
-  'sb-3bet': {
-    what: 'SB vs BTN, from the small blind\'s own decision',
-    line: ['fold', 'fold', 'fold', 'raise'],
-    over: { maxToDraw: 2 },
-    // Follow the 3-bet rather than the flat: it is the line the spot is for.
-    follow: 'raise',
-  },
-  'bb-3bet': {
-    what: 'BTN facing the BB\'s 3-bet',
-    line: ['fold', 'fold', 'fold', 'raise', 'fold', 'raise'],
-    over: {},
-  },
-};
 
 const key = flag('spot', 'btn-bb');
 const spot = SPOTS[key];
@@ -151,12 +114,40 @@ const solver = new BadugiSolver({
 const { labels, combos } = badugiTable();
 
 /**
+ * `--lock-badugis`: the seat to act first three-bets every badugi, always.
+ *
+ * The rest of the tree still solves, so the button adapts to it - which is the
+ * only way the question is worth asking. Its own later decisions are free; it
+ * is the one choice that is held.
+ */
+if (argv.includes('--lock-badugis')) {
+  const root = solver.nodes[solver.tree.root];
+  const raise = root.actions.findIndex((a) => a.kind === 'raise');
+  if (raise < 0) throw new Error('nothing to raise with at the first decision');
+  const { hands } = handFacts();
+  const applies = new Uint8Array(solver.handCount);
+  const mix = new Float32Array(solver.handCount * root.actions.length);
+  let locked = 0;
+  for (let h = 0; h < hands.length; h += 1) {
+    if (hands[h].size !== 4) continue;
+    applies[h] = 1;
+    mix[h * root.actions.length + raise] = 1;
+    locked += 1;
+  }
+  solver.locks = [];
+  solver.locks[solver.tree.root] = { applies, mix };
+  console.log(`  LOCKED: ${names[root.seat]} three-bets all ${locked} badugi values, always.`);
+}
+
+/**
  * The run is resumed where one exists, because these are hours long and the
  * thin information sets want more hours than anyone sits through at once.
  * `--iterations` is the total to reach, not the number to add, so asking for
  * 10M twice is 10M and not 20M - and asking for 20M after a 10M run adds ten.
  */
-const checkpoint = resolve(here, '..', 'solves', `badugi-${key}`);
+const label = flag('label', null);
+const slug = label ? `${key}-${label}` : key;
+const checkpoint = resolve(here, '..', 'solves', `badugi-${slug}`);
 const resumed = argv.includes('--fresh') ? false : loadBadugi(solver, checkpoint);
 if (resumed && resumed.mismatch) {
   console.log(`  a checkpoint exists but describes a different game (${resumed.mismatch}); `
@@ -189,73 +180,26 @@ console.log(!already
       + `the ${iterations.toLocaleString()} asked for.\n`
     : `  resuming at ${already.toLocaleString()}, up to ${iterations.toLocaleString()}…\n`);
 
-/** The decisions worth writing down, found by walking from the root. */
-function spots() {
-  const found = [];
-  const seen = new Set();
-  let id = solver.tree.root;
-  for (let guard = 0; guard < 8 && id >= 0; guard += 1) {
-    const node = solver.nodes[id];
-    if (!node || node.kind !== 'decision' || seen.has(id)) break;
-    seen.add(id);
-    found.push({
-      id,
-      what: node.street === DRAWING
-        ? `${names[node.seat]} first draw`
-        : `${names[node.seat]} facing the bet`,
-      seat: node.seat,
-      drawing: node.street === DRAWING,
-    });
-    // Follow the line everyone continues on, which is where the reads are.
-    const next = (guard === 0 && spot.follow
-      ? node.actions.find((a) => a.kind === spot.follow) : null)
-      ?? node.actions.find((a) => a.kind === 'call')
-      ?? node.actions.find((a) => a.kind === 'check')
-      ?? node.actions[0];
-    id = next ? next.child : -1;
-  }
-  return found;
-}
-
-const watched = spots();
+const watched = walkSpots(solver, {
+  follow: spot.follow ?? null,
+  branches: spot.branches ?? [],
+  names,
+});
 
 function report(final) {
-  const out = {
-    built: new Date().toISOString(),
-    spot: key,
+  const out = buildReport(solver, {
+    key,
     what: spot.what,
     line: spot.line,
     config,
     preset: { seat: btn, share: btnRange.share },
-    iterations: solver.iterations,
-    complete: final,
-    names,
     labels,
-    combos: Array.from(combos),
-    spots: watched.map(({ id, what, seat, drawing }) => {
-      const node = solver.nodes[id];
-      const mix = new Float64Array(node.actions.length);
-      let total = 0;
-      const perHand = [];
-      for (let hand = 0; hand < solver.handCount; hand += 1) {
-        const strategy = solver.averageAt(id, hand);
-        const weight = combos[hand];
-        for (let a = 0; a < strategy.length; a += 1) mix[a] += weight * strategy[a];
-        total += weight;
-        perHand.push(Array.from(strategy, (v) => Number(v.toFixed(4))));
-      }
-      return {
-        id,
-        what,
-        seat,
-        drawing,
-        actions: node.actions.map((a) => ({ label: a.label, kind: a.kind })),
-        overall: Array.from(mix, (v) => Number((100 * v / total).toFixed(2))),
-        hands: perHand,
-      };
-    }),
-  };
-  const file = resolve(here, '..', 'data', `badugi-${key}.json`);
+    combos,
+    names,
+    watched,
+    final,
+  });
+  const file = resolve(here, '..', 'data', `badugi-${slug}.json`);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(out));
   return out;
@@ -292,6 +236,7 @@ const build = {
   line: spot.line,
   explore: number('explore', 0.02),
   preset: { seat: btn, share: argv.includes('--btn-range') ? number('btn-range') : null },
+  lockBadugis: argv.includes('--lock-badugis'),
 };
 
 const progress = (s) => {
