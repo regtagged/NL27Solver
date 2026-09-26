@@ -115,18 +115,34 @@ test('reach survives a pat and is dropped by a draw', () => {
     'once a seat has taken a card, reach for that seat is gone');
 });
 
-test('a spot carries reach or the hands the solve saw there, never both', () => {
+test('a spot carries reach or the traffic the solve measured, never both', () => {
   const solver = solved();
   const out = report(solver, walkSpots(solver, { names, branches: [BRANCH] }));
 
   for (const spot of out.spots) {
-    assert.ok((spot.reach === null) !== (spot.seen === null),
-      `${spot.what} should be weighted by reach or by what was seen, not both`);
-    if (spot.seen) {
-      assert.ok(spot.seen.every((v) => v === 0 || v === 1));
-      assert.ok(spot.seen.some((v) => v === 1), 'some hand was there');
+    assert.ok((spot.reach === null) !== (spot.traffic === null),
+      `${spot.what} should be weighted by reach or by measured traffic, not both`);
+    if (spot.traffic) {
+      assert.ok(spot.traffic.every((v) => v >= 0), 'traffic is a mass, never negative');
+      assert.ok(spot.traffic.some((v) => v > 0), 'some hand was there');
     }
   }
+});
+
+test('traffic is how often a hand was there, not whether it ever was', () => {
+  const solver = solved({}, 4000);
+  const out = report(solver, walkSpots(solver, { names, branches: [BRANCH] }));
+  const sampled = out.spots.find((s) => s.traffic);
+  if (!sampled) return;
+
+  // The point of the change: a flag cannot tell the hand that arrives constantly
+  // from the one the solver brushed against once, and both were being shown as
+  // equally present.
+  const live = sampled.traffic.filter((v) => v > 0);
+  assert.ok(live.length > 1, 'more than one hand reaches this node');
+  const most = Math.max(...live);
+  const least = Math.min(...live);
+  assert.ok(most > least, 'and they do not all arrive equally often');
 });
 
 test('a draw action keeps how many cards it takes, which is what the viewer colours by', () => {
@@ -153,4 +169,19 @@ test('the overall mix is weighted by what arrives, not by what is dealt', () => 
   }
   assert.ok(Math.abs(theirs.overall[0] - (100 * deck / deckAll)) > 0.01,
     'weighting by the deck should give a different answer, or reach is doing nothing');
+});
+
+test('an unopened pot follows the raise, not the fold, or the report is one line long', () => {
+  // Folded to a seat that may not limp, the only actions are fold and raise.
+  // Taking the first one walks straight into a terminal, and `sb-bb` shipped a
+  // report with a single decision in it because of exactly that.
+  const solver = new BadugiSolver({ config, seed: 5, trackEv: false, explore: 0.02 });
+  solver.run(400);
+  const root = solver.nodes[solver.tree.root];
+  assert.deepEqual(root.actions.map((a) => a.kind), ['fold', 'raise'],
+    'this test is only meaningful while the root has no call and no check');
+
+  const spots = walkSpots(solver, { names });
+  assert.ok(spots.length > 1, `the walk stopped after ${spots.length} decision(s)`);
+  assert.ok(spots.some((s) => s.drawing), 'and it should reach the draw');
 });

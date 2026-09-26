@@ -31,7 +31,7 @@ import { stateAfter, positionNames, DRAWING } from '../lib/tree.js';
 import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, handFacts } from '../lib/badugi-benchmark.js';
 import { loadBadugi } from '../lib/badugi-checkpoint.js';
-import { SPOTS } from '../lib/badugi-spots.js';
+import { SPOTS, presetFor } from '../lib/badugi-spots.js';
 import { makeRng, deal } from '../lib/cards.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -60,13 +60,16 @@ const config = badugiConfig({
 });
 
 const btnRange = buttonOpeningRange();
+// Null where the spot presets nobody, and then the deal below must not filter
+// on a range the solve never applied.
+const preset = presetFor(key, btn, btnRange);
 const solver = new BadugiSolver({
   config,
   from: stateAfter(config, spot.line),
   seed: Number(flag('seed', 21)),
   trackEv: false,
   explore: Number(flag('explore', 0.02)),
-  presetRanges: { [btn]: btnRange },
+  presetRanges: preset,
 });
 
 const label = flag('label', null);
@@ -111,7 +114,7 @@ function dealUntilHeld(rng) {
   for (let tries = 0; tries < 2e7; tries += 1) {
     deal(solver.deck, solver.cardsNeeded, rng);
     if (!target[solver.holeValue(hero)]) continue;
-    if (!btnRange[solver.holeValue(btn)]) continue;
+    if (preset && !preset[btn][solver.holeValue(btn)]) continue;
     solver.drawn.fill(-1);
     for (const seat of solver.live) solver.prepareSeat(seat);
     return true;

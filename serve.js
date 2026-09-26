@@ -16,9 +16,15 @@ import { fileURLToPath } from 'node:url';
 
 import { Solver } from './lib/solve.js';
 import { indexNodes, strategyTree, foldRoundTo, followLine } from './lib/browse.js';
-import { positionNames, preDrawOrder, threeBetFlag } from './lib/tree.js';
+import { positionNames, preDrawOrder, threeBetFlag, DRAWING, POST_DRAW } from './lib/tree.js';
 import { save, load, solveKey } from './lib/checkpoint.js';
 import { handFacts } from './lib/badugi-benchmark.js';
+import { badugiTable } from './lib/badugi.js';
+import { keepFor } from './lib/badugi-solve.js';
+import { openSolve, browse } from './lib/badugi-browse.js';
+import { startsWhole } from './lib/badugi-spots.js';
+import { priceActions } from './lib/badugi-price.js';
+import { makeRng } from './lib/cards.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, 'public');
@@ -31,6 +37,308 @@ const flag = (name, fallback) => {
   return at >= 0 && at + 1 < argv.length ? argv[at + 1] : fallback;
 };
 const port = Number(flag('port', process.env.PORT ?? 43195));
+
+/**
+ * Badugi solves held open for browsing, a few at a time.
+ *
+ * Opening one is a couple of seconds of tree building and a block cache; the
+ * five gigabytes of strategy stay on disk and arrive a node at a time. It still
+ * happens in the background - the first request starts it and is told to come
+ * back - and a failure is remembered too, so a missing checkpoint is reported
+ * instead of being retried on every poll.
+ */
+const badugis = new Map();
+// Few enough to stay cheap, more than one because there is more than one page.
+// Holding exactly one meant a drill and a viewer on different spots evicted each
+// other on every request: each poll dropped the other's solve, both spent their
+// lives reopening, and a hand in progress died mid-decision with the server
+// answering `loading` forever. Open is not loaded - a solve is its tree and a
+// block cache, not the five gigabytes on disk - so a handful costs little.
+const BADUGI_OPEN = 3;
+
+function openBadugi(key) {
+  const held = badugis.get(key);
+  if (held) {
+    // Most recently used last, so the eviction below drops the coldest.
+    badugis.delete(key);
+    badugis.set(key, held);
+    if (held.error) return { error: held.error };
+    if (held.solve) return { solve: held.solve };
+    return { since: Date.now() - held.since };
+  }
+  const badugi = { slug: key, solve: null, loading: null, since: Date.now(), error: null };
+  badugis.set(key, badugi);
+  while (badugis.size > BADUGI_OPEN) badugis.delete(badugis.keys().next().value);
+  badugi.loading = (async () => {
+    try {
+      // Yield first: the load blocks this thread for a minute, and the request
+      // that started it has to be answered before that happens.
+      await new Promise((go) => setImmediate(go));
+      // A big block cache, because the drill prices actions by playing thousands
+      // of hands out and a rollout lands on scattered nodes across the whole
+      // tree. At 4,096 blocks almost every one of those is a seek, and a single
+      // price took minutes instead of half a second - with the event loop
+      // blocked for all of it, because the reads are synchronous. Everything
+      // reachable under the average strategy is a few tens of thousands of
+      // blocks, so holding that many turns the second price and every one after
+      // it into memory reads.
+      const solve = openSolve(key, { dir: resolve(here, 'solves'), cache: 80000 });
+      badugi.solve = solve;
+      console.log(`  badugi: ${key} open at ${solve.head.iterations.toLocaleString()} iterations`);
+    } catch (error) {
+      badugi.error = String(error.message ?? error);
+      console.log(`  badugi: ${key} could not be opened - ${error.message ?? error}`);
+    }
+  })();
+  return { since: 0 };
+}
+
+/**
+ * Hands in progress, for the drill.
+ *
+ * A deal is the deck, and the deck is what makes the hand reproducible: the
+ * replacement cards come off it before anything is played, so a draw is a lookup
+ * rather than a new random card, and the same deal can be replayed for pricing
+ * as many times as the pricer wants. The client holds an id and nothing else -
+ * the deck stays here, because it contains the opponent's cards and a client
+ * that had them could read them.
+ *
+ * Capped and evicted oldest-first. A drill session is a few dozen hands and a
+ * deck is twenty-six numbers, so this is kilobytes; the cap is there so a page
+ * left open for a week cannot become a leak.
+ */
+const drills = new Map();
+const DRILL_LIMIT = 500;
+
+function remember(deal) {
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  drills.set(id, deal);
+  while (drills.size > DRILL_LIMIT) drills.delete(drills.keys().next().value);
+  return id;
+}
+
+/* ----------------------------------------------------------------- the drill */
+
+/**
+ * One deal for the drill, with the player's seat fixed.
+ *
+ * `dealHands` respects the preset ranges, so a drill against `btn-bb` deals the
+ * button a hand it would actually have opened. The deck is copied out because
+ * the solver's own is scratch and every later call re-installs this one.
+ */
+function dealDrill(solver, mine) {
+  solver.dealHands(makeRng((Math.random() * 2 ** 31) >>> 0));
+  return { mine, deck: Array.from(solver.deck), at: Date.now(), plays: [] };
+}
+
+/**
+ * Which of the two seats has position, found rather than assumed.
+ *
+ * Position in a draw game is who acts *last* after the draw, and that is not
+ * something to hardcode: the blinds act last before the draw and first after it,
+ * so the seat order flips, and a subgame starting part way through a hand can
+ * leave either seat to act first. So the tree is asked - the shallowest betting
+ * decision after a draw belongs to whoever is out of position, and the other
+ * live seat is in it.
+ */
+function positionOf(solver) {
+  const seen = new Set([solver.tree.root]);
+  const queue = [solver.tree.root];
+  while (queue.length) {
+    const node = solver.nodes[queue.shift()];
+    if (!node || node.kind !== 'decision') continue;
+    if (node.street === POST_DRAW) {
+      const first = node.seat;
+      return { out: first, in: solver.live.find((seat) => seat !== first) ?? first };
+    }
+    for (const action of node.actions) {
+      if (seen.has(action.child)) continue;
+      seen.add(action.child);
+      queue.push(action.child);
+    }
+  }
+  // Nothing past the draw in this tree, which only happens for a game that ends
+  // at one. Then nobody has position and the first to act is named so.
+  const first = solver.nodes[solver.tree.root].seat;
+  return { out: first, in: solver.live.find((seat) => seat !== first) ?? first };
+}
+
+/**
+ * What is in the pot before anybody in this tree has acted.
+ *
+ * A subgame starts part way through a hand, and its `from` state is the record of
+ * what has already gone in - the button's open in `btn-bb`, the blinds in
+ * `sb-bb`. A whole game has no such state, so it is the blinds and antes.
+ */
+function startingPot(solver) {
+  const start = Math.round(solver.config.stack * 100);
+  if (solver.from) {
+    let pot = 0;
+    for (let seat = 0; seat < solver.players; seat += 1) pot += start - solver.from.stack[seat];
+    return pot;
+  }
+  const { smallBlind = 0, bigBlind = 0, ante = 0 } = solver.config;
+  return Math.round((smallBlind + bigBlind + ante * solver.players) * 100);
+}
+
+/**
+ * Puts a remembered deal back into the solver and replays a line onto it.
+ *
+ * The pot is added up on the way through, because only terminal nodes carry the
+ * state that prices one - a walk has no use for the pot at a decision, so the
+ * tree does not keep it there. Every action carries what it puts in, which is the
+ * same number from the other end.
+ */
+function restore(solver, deal, line) {
+  solver.deck.set(deal.deck);
+  solver.drawn.fill(-1);
+  for (const seat of solver.live) solver.prepareSeat(seat);
+  let id = solver.tree.root;
+  let pot = startingPot(solver);
+  for (const at of line) {
+    const node = solver.nodes[id];
+    if (!node || node.kind !== 'decision') throw new Error('the hand ended before that action');
+    if (at < 0 || at >= node.actions.length) throw new Error('that action is not offered here');
+    if (node.street === DRAWING) {
+      solver.drawn[node.seat * solver.rounds + solver.roundOf(node)] = node.actions[at].option;
+    }
+    pot += node.actions[at].amount ?? 0;
+    id = node.actions[at].child;
+  }
+  return { id, pot };
+}
+
+/**
+ * The four cards a seat is holding now, drawn cards included.
+ *
+ * The solver keeps `handAfter` - the badugi *value* after any draw history - but
+ * never the cards themselves, because a walk has no use for them. A drill does:
+ * a player who drew two has to be shown what they drew. So the history is
+ * replayed exactly as `prepareSeat` builds it, same keep rule and same
+ * replacements off the same deck, which is what makes the cards shown agree with
+ * the value the strategy is indexed by.
+ */
+function cardsNow(solver, seat) {
+  let cards = [];
+  for (let i = 0; i < 4; i += 1) cards.push(solver.deck[seat * 4 + i]);
+  const into = new Array(4);
+  const base = seat * solver.rounds;
+  for (let round = 0; round < solver.rounds; round += 1) {
+    const took = solver.drawn[base + round];
+    if (took < 0) break;
+    if (took === 0) continue;
+    const kept = keepFor(cards, took, into);
+    const next = cards.slice();
+    for (let i = 0; i < kept; i += 1) next[i] = into[i];
+    const from = solver.reserveAt[seat] + solver.roundOffset[seat][round];
+    for (let i = 0; i < took; i += 1) next[kept + i] = solver.deck[from + i];
+    cards = next;
+  }
+  return cards.sort((a, b) => a - b);
+}
+
+/**
+ * Where the hand stands, and what the solve would do with what the player holds.
+ *
+ * The opponent's actions are *not* taken here. The page asks for a state, is told
+ * whose turn it is, and when it is the opponent's turn it asks the solve to move
+ * - which keeps every action in the line the client holds, so a hand can be
+ * replayed, priced, and linked to in the viewer by exactly the line that
+ * happened.
+ */
+function drillState(solver, names, deal, line) {
+  const { id, pot } = restore(solver, deal, line);
+  const node = solver.nodes[id];
+  const mine = deal.mine;
+  const theirs = solver.live.find((seat) => seat !== mine);
+  const held = solver.handTable[solver.handAfter[mine * solver.slotsPerSeat + solver.slotFor(mine)]];
+  const over = !node || node.kind !== 'decision';
+
+  const out = {
+    seat: mine,
+    who: names[mine],
+    against: names[theirs],
+    cards: cardsNow(solver, mine),
+    // The value of what the player is holding *now*, after any draws, which is
+    // the whole reason a drill can show a strategy at all past the first draw:
+    // the deck is known here even though the player cannot name the cards.
+    value: held,
+    label: solver.handLabels[held],
+    line,
+    over,
+  };
+  if (over) {
+    return {
+      ...out,
+      ending: node ? node.kind : 'nothing',
+      // Only now, and only because the hand is over.
+      showdown: cardsNow(solver, theirs),
+      theirValue: solver.handTable[
+        solver.handAfter[theirs * solver.slotsPerSeat + solver.slotFor(theirs)]],
+      won: node ? solver.payoff(node, mine) : 0,
+    };
+  }
+  const actor = node.seat === mine;
+  const acting = solver.handTable[
+    solver.handAfter[node.seat * solver.slotsPerSeat + solver.slotFor(node.seat)]];
+  const mix = Array.from(solver.averageAt(node.id, acting), (v) => Number(v.toFixed(4)));
+  return {
+    ...out,
+    yours: actor,
+    node: {
+      id: node.id,
+      seat: node.seat,
+      who: names[node.seat],
+      drawing: node.street === DRAWING,
+      // `potAt` is only priced for terminals - a walk never needs the pot at a
+      // decision - so it is added up here from what the seats have put in.
+      pot,
+      actions: node.actions.map((a, at) => ({
+        at, label: a.label, kind: a.kind, option: a.option ?? null,
+      })),
+    },
+    // The mix for whoever is to act, which is the player's own strategy when it
+    // is their turn and the solve's when it is not. Sending it either way is what
+    // lets the page move the opponent without another round trip.
+    mix: actor ? mix : null,
+    theirMix: actor ? null : mix,
+  };
+}
+
+/**
+ * What each action at this decision is worth to the player, measured.
+ *
+ * Two thousand deals by default, which is about half a second and an error near
+ * fifteen hundredths of a bet - enough to catch a blunder and not enough to rank
+ * two close actions. The page says which, because a number without its error is
+ * how a drill teaches something that is not true.
+ */
+function drillPrice(solver, deal, line, deals) {
+  restore(solver, deal, line);
+  const cards = cardsNow(solver, deal.mine);
+  const value = solver.holeValue(deal.mine);
+  const out = priceActions(solver, {
+    line, seat: deal.mine, cards, deals, seed: 4242, baseline: 0,
+  });
+  // Restored afterwards because pricing deals thousands of other hands into the
+  // solver's deck, and the next request expects this one's.
+  restore(solver, deal, line);
+  const best = out.arms.reduce((a, b) => (b.mean > a.mean ? b : a), out.arms[0]);
+  return {
+    deals: out.used,
+    value,
+    // Everything quoted against the best action, so a mistake reads as what it
+    // cost rather than as an absolute nobody has a feel for.
+    best: best.at,
+    arms: out.arms.map((arm) => ({
+      at: arm.at,
+      label: arm.label,
+      ev: Number(arm.mean.toFixed(1)),
+      error: Number.isFinite(arm.error) ? Number(arm.error.toFixed(1)) : null,
+      cost: Number((arm.mean - best.mean).toFixed(1)),
+    })),
+  };
+}
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -316,7 +624,124 @@ const server = createServer(async (request, response) => {
         .map((name) => name.replace(/^badugi-|.json$/g, ''))
         .filter((name) => !/^d+p$/.test(name))
       : [];
-    return json(response, { solves: found });
+    // `?whole=1` keeps only the solves that begin where a hand begins, which is
+    // what the drill wants: a spot starting after somebody has already raised
+    // hands the player a decision they never made.
+    const whole = url.searchParams.has('whole');
+    return json(response, {
+      solves: whole ? found.filter(startsWhole) : found,
+    });
+  }
+
+  /**
+   * Any node of a badugi solve, reached by the actions that lead to it.
+   *
+   *   /api/badugi-node?spot=sb-bb&line=raise,call,pat
+   *
+   * The report file holds fourteen decisions; this holds all 226,098 of them,
+   * because it keeps the checkpoint open instead of writing it out. That costs
+   * five gigabytes of memory and about a minute to read, which is why the load
+   * happens once, in the background, and this answers `{ loading: true }` until
+   * it is done rather than holding the request open for a minute.
+   */
+  if (url.pathname === '/api/badugi-node') {
+    const key = (url.searchParams.get('spot') ?? 'btn-bb').replace(/[^a-z0-9-]/gi, '');
+    const opened = openBadugi(key);
+    if (opened.error) return json(response, { ok: false, error: opened.error });
+    if (!opened.solve) {
+      return json(response, { ok: false, loading: true, slug: key, since: opened.since });
+    }
+    const steps = (url.searchParams.get('line') ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    try {
+      const { combos } = badugiTable();
+      // An optional hand the reader has typed in, so the answer can say what
+      // that hand does rather than only what the range does.
+      const asked = url.searchParams.get('hand');
+      const hand = asked !== null && /^[0-9]+$/.test(asked) ? Number(asked) : null;
+      const out = browse(opened.solve.solver, steps, { names: opened.solve.names, combos, hand });
+      return json(response, {
+        ok: true,
+        spot: key,
+        what: opened.solve.spot.what,
+        iterations: opened.solve.head.iterations,
+        preset: opened.solve.solver.presetRanges ? true : false,
+        live: [...opened.solve.solver.live],
+        ...out,
+      });
+    } catch (error) {
+      return json(response, { ok: false, error: String(error.message ?? error) });
+    }
+  }
+
+  /**
+   * The drill: play a hand out against the solve, and be told what it cost.
+   *
+   *   /api/drill?spot=sb-bb&do=deal[&seat=0]
+   *   /api/drill?spot=sb-bb&do=state&id=...&line=0,1
+   *   /api/drill?spot=sb-bb&do=price&id=...&line=0,1[&deals=2000]
+   *
+   * Stateless except for the deck, which is held by id. `state` says where the
+   * hand stands, what the player may do, and what the solve's own strategy is for
+   * the hand the player is holding - so the page can show a mistake as a
+   * frequency immediately and ask for the price of one separately, because a
+   * price is a few thousand play-outs and a frequency is a lookup.
+   *
+   * The opponent plays the solve. Its hand is never sent until the hand is over.
+   */
+  if (url.pathname === '/api/drill') {
+    const key = (url.searchParams.get('spot') ?? 'sb-bb').replace(/[^a-z0-9-]/gi, '');
+    const opened = openBadugi(key);
+    if (opened.error) return json(response, { ok: false, error: opened.error });
+    if (!opened.solve) {
+      return json(response, { ok: false, loading: true, slug: key, since: opened.since });
+    }
+    const { solver, names } = opened.solve;
+    const doing = url.searchParams.get('do') ?? 'state';
+    try {
+      if (doing === 'seats') {
+        // Named for the page's picker: which seats there are, what they are
+        // called, and which of them is the one with position.
+        const spots = positionOf(solver);
+        return json(response, {
+          ok: true,
+          what: opened.solve.spot.what,
+          iterations: opened.solve.head.iterations,
+          seats: solver.live.map((seat) => ({
+            seat, who: names[seat], position: seat === spots.in ? 'in' : 'out',
+          })),
+          inPosition: spots.in,
+          outOfPosition: spots.out,
+        });
+      }
+      if (doing === 'deal') {
+        const wants = url.searchParams.get('seat') ?? '';
+        const spots = positionOf(solver);
+        // A seat may be asked for by number or by where it sits. "Alternate" is
+        // the page's business, not the server's: it picks a side and names it.
+        const asked = wants === 'in' ? spots.in
+          : wants === 'out' ? spots.out
+            : Number(wants);
+        // Whoever acts first by default, so a drill that says nothing gets the
+        // seat whose decision the solve is really about.
+        const mine = solver.live.includes(asked) ? asked : solver.nodes[solver.tree.root].seat;
+        const deal = dealDrill(solver, mine);
+        const id = remember(deal);
+        return json(response, { ok: true, id, ...drillState(solver, names, deal, []) });
+      }
+      const id = url.searchParams.get('id') ?? '';
+      const deal = drills.get(id);
+      if (!deal) return json(response, { ok: false, error: 'that hand is no longer held' });
+      const line = (url.searchParams.get('line') ?? '')
+        .split(',').map((s) => s.trim()).filter(Boolean).map(Number);
+      if (doing === 'price') {
+        const deals = Math.max(200, Math.min(20000, Number(url.searchParams.get('deals') ?? 2000)));
+        return json(response, { ok: true, id, ...drillPrice(solver, deal, line, deals) });
+      }
+      return json(response, { ok: true, id, ...drillState(solver, names, deal, line) });
+    } catch (error) {
+      return json(response, { ok: false, error: String(error.message ?? error) });
+    }
   }
 
   if (url.pathname === '/api/ranked') {

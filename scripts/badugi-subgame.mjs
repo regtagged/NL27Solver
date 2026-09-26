@@ -55,7 +55,7 @@ import { badugiTable } from '../lib/badugi.js';
 import { handFacts } from '../lib/badugi-benchmark.js';
 import { saveBadugi, loadBadugi } from '../lib/badugi-checkpoint.js';
 import { walkSpots, buildReport } from '../lib/badugi-report.js';
-import { SPOTS } from '../lib/badugi-spots.js';
+import { SPOTS, presetFor } from '../lib/badugi-spots.js';
 import { runParallel, defaultWorkers } from '../lib/badugi-parallel.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -97,6 +97,22 @@ const config = badugiConfig({
 const btnRange = argv.includes('--btn-range')
   ? rangeByShare(number('btn-range'))
   : buttonOpeningRange();
+// Null for a spot that starts before anybody has acted: there is no opening
+// range to inherit, which is the point of such a spot.
+const preset = presetFor(key, btn, btnRange);
+/**
+ * Two algorithm settings that are on here and off in the library.
+ *
+ * `lib/badugi-solve.js` defaults both away so that nothing already written -
+ * every other script, every test, every checkpoint - changes meaning. A solve
+ * being started now is a different matter: pruning is 14x the rate on a settled
+ * tree and fading exploration removes a 2% bias that is the same order as the
+ * leak being measured, and there is no reason to start a run without either.
+ * Both are printed on every run, because both change the answer.
+ */
+const exploreDecay = argv.includes('--no-decay') ? null : number('explore-decay', 200);
+const prune = argv.includes('--no-prune') ? null : { revisit: number('revisit', 0.02) };
+
 const from = stateAfter(config, spot.line);
 const solver = new BadugiSolver({
   config,
@@ -104,7 +120,9 @@ const solver = new BadugiSolver({
   seed: number('seed', 21),
   trackEv: false,
   explore: number('explore', 0.02),
-  presetRanges: { [btn]: btnRange },
+  exploreDecay,
+  prune,
+  presetRanges: preset,
   // Laid out in shared memory so the worker threads solve into these tables
   // rather than each into its own. It also means nothing allocates during the
   // walk, which is why a run no longer starts at a third of its settled rate.
@@ -172,7 +190,14 @@ console.log(`  live: ${solver.live.map((s) => names[s]).join(' vs ')}`
     return `; entry capped at ${config.maxToDraw} - once ${before} comes in, ${last} may `
       + 'not, so this is solved as though nobody can follow';
   })()));
-console.log(`  BTN opens ${btnRange.share.toFixed(1)}%: ${describeRange(btnRange)}`);
+console.log(preset
+  ? `  BTN opens ${btnRange.share.toFixed(1)}%: ${describeRange(btnRange)}`
+  : `  no preset range: both seats' strategies come out of the solve`);
+console.log(`  ${prune
+  ? `pruning regret below ${solver.pruneBelow.toFixed(0)}, `
+    + `${(100 * solver.pruneRevisit).toFixed(0)}% of iterations walking everything`
+  : 'no pruning'}; exploring ${(100 * solver.explore).toFixed(1)}%`
+  + `${exploreDecay ? `, halving every ${exploreDecay} discount steps` : ' throughout'}`);
 console.log(!already
   ? `  ${iterations.toLocaleString()} iterations…\n`
   : already >= iterations
@@ -192,7 +217,7 @@ function report(final) {
     what: spot.what,
     line: spot.line,
     config,
-    preset: { seat: btn, share: btnRange.share },
+    preset: preset ? { seat: btn, share: btnRange.share } : null,
     labels,
     combos,
     names,
@@ -235,7 +260,12 @@ const build = {
   },
   line: spot.line,
   explore: number('explore', 0.02),
-  preset: { seat: btn, share: argv.includes('--btn-range') ? number('btn-range') : null },
+  // A worker that did not get these would be solving a different algorithm from
+  // the one the banner reports: exploring when the run has stopped, or walking
+  // what the main thread believes is pruned.
+  exploreDecay,
+  prune,
+  preset: preset ? { seat: btn, share: argv.includes('--btn-range') ? number('btn-range') : null } : null,
   lockBadugis: argv.includes('--lock-badugis'),
 };
 
@@ -287,7 +317,14 @@ for (const line of out.spots) {
     .join('  ');
   console.log(`  ${line.what.padEnd(26)} ${text}`);
 }
-console.log(`\n  The button was dealt ${btnRange.share.toFixed(1)}% of hands: `
-  + `${describeRange(btnRange)}.`);
-console.log('  Change that range and every number above changes. It is the one thing');
-console.log('  here the solve cannot check for you.');
+if (preset) {
+  console.log(`\n  The button was dealt ${btnRange.share.toFixed(1)}% of hands: `
+    + `${describeRange(btnRange)}.`);
+  console.log('  Change that range and every number above changes. It is the one thing');
+  console.log('  here the solve cannot check for you.');
+} else {
+  console.log('\n  Nothing above rests on an assumed range: both seats were still to act,');
+  console.log('  so both strategies came out of the solve. The four folded seats are dealt');
+  console.log('  uniformly rather than out of the hands they would fold, which is the one');
+  console.log('  approximation left.');
+}

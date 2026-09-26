@@ -23,7 +23,10 @@
     "badugi:sweep": "node --max-old-space-size=24000 scripts/badugi-sweep.mjs",
     "badugi:report": "node --max-old-space-size=24000 scripts/badugi-report.mjs",
     "badugi:snow": "node --max-old-space-size=24000 scripts/badugi-snow.mjs",
-    "badugi:show": "node scripts/badugi-show.mjs"
+    "badugi:show": "node scripts/badugi-show.mjs",
+    "badugi:history": "node scripts/badugi-history.mjs",
+    "badugi:draws": "node scripts/badugi-draws.mjs",
+    "badugi:headsup": "node --max-old-space-size=48000 scripts/badugi-headsup.mjs"
   },
   "engines": {
     "node": ">=18"

@@ -29,7 +29,7 @@ import { stateAfter, positionNames, DRAWING } from '../lib/tree.js';
 import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, handFacts } from '../lib/badugi-benchmark.js';
 import { loadBadugi } from '../lib/badugi-checkpoint.js';
-import { SPOTS } from '../lib/badugi-spots.js';
+import { SPOTS, presetFor } from '../lib/badugi-spots.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -63,7 +63,7 @@ const solver = new BadugiSolver({
   seed: Number(flag('seed', 21)),
   trackEv: false,
   explore: Number(flag('explore', 0.02)),
-  presetRanges: { [btn]: buttonOpeningRange() },
+  presetRanges: presetFor(key, btn, buttonOpeningRange()),
 });
 
 const head = loadBadugi(solver, resolve(here, '..', 'solves', `badugi-${key}`));

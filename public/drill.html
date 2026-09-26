@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Badugi drill</title>
+<script>
+  /**
+   * The saved theme, applied before the first paint.
+   *
+   * It has to run here rather than with the rest of the script: anything after
+   * the body has already been painted once, and a player who chose dark would
+   * get a white flash on every load. Wrapped because reading storage throws
+   * outright in a private window, and the page has to render either way - with
+   * nothing saved the stylesheet follows the system, which is the right default.
+   */
+  try {
+    const saved = localStorage.getItem('drill-theme');
+    if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+  } catch (error) { /* no storage: the system setting stands */ }
+</script>
+<style>
+  :root {
+    --ink: #17191c;
+    --dim: #6b7280;
+    --line: #e3e5e9;
+    --page: #fbfbfc;
+    --card: #ffffff;
+    --good: #12805c;
+    --bad: #b4232a;
+    --warn: #9a6a00;
+    --pick: #1f4ed8;
+    /* A four-colour deck. The point of one is that suits are told apart at a
+       glance, so these are picked for distance from each other rather than for
+       looking like a deck: spades dark, hearts red, diamonds blue, clubs green. */
+    --s: #1c1f24;
+    --h: #c62828;
+    --d: #1565c0;
+    --c: #2e7d32;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e8eaed; --dim: #9aa0a6; --line: #2b2f36; --page: #15171a; --card: #1d2024;
+      --good: #4cc79a; --bad: #f2746f; --warn: #e0b341; --pick: #7aa2ff;
+      --s: #cfd4da; --h: #ef5350; --d: #64b5f6; --c: #66bb6a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e8eaed; --dim: #9aa0a6; --line: #2b2f36; --page: #15171a; --card: #1d2024;
+    --good: #4cc79a; --bad: #f2746f; --warn: #e0b341; --pick: #7aa2ff;
+    --s: #cfd4da; --h: #ef5350; --d: #64b5f6; --c: #66bb6a;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: var(--dim); font-size: 13px; margin: 0 0 20px; }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 14px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .spread { justify-content: space-between; }
+  label { font-size: 13px; color: var(--dim); }
+  select, button {
+    font: inherit; color: var(--ink); background: var(--card);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--pick); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.go { background: var(--pick); border-color: var(--pick); color: #fff; }
+  button.go:hover { filter: brightness(1.08); }
+
+  /* Cards */
+  .hand { display: flex; gap: 6px; }
+  .pip {
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 44px; height: 60px; border-radius: 7px; background: var(--card);
+    border: 1px solid var(--line); font-weight: 650; line-height: 1.1;
+    font-variant-numeric: tabular-nums; user-select: none;
+  }
+  .pip .r { font-size: 19px; }
+  .pip .u { font-size: 14px; }
+  .pip.s { color: var(--s); } .pip.h { color: var(--h); }
+  .pip.d { color: var(--d); } .pip.c { color: var(--c); }
+  .pip.fresh { box-shadow: inset 0 0 0 2px var(--pick); }
+  td .pip { width: 26px; height: 34px; border-radius: 5px; }
+  td .pip .r { font-size: 12px; }
+  td .pip .u { font-size: 9px; }
+  .pip.back {
+    color: var(--dim); background: repeating-linear-gradient(45deg,
+      var(--line) 0 4px, transparent 4px 8px);
+  }
+
+  .seats { display: grid; gap: 12px; }
+  .seat { display: flex; gap: 14px; align-items: center; }
+  .who { width: 92px; font-size: 13px; color: var(--dim); }
+  .took { font-size: 13px; color: var(--dim); }
+  .pot { font-variant-numeric: tabular-nums; }
+
+  /* Actions */
+  .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .act { position: relative; min-width: 82px; text-align: center; }
+  .act.best { border-color: var(--good); }
+  .act .ev { display: block; font-size: 11px; margin-top: 1px; font-variant-numeric: tabular-nums; }
+  .act .ev.loss { color: var(--bad); }
+  .act .ev.level { color: var(--good); }
+
+  /* Verdicts */
+  .verdict { margin-top: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); }
+  .verdict.ok { border-color: var(--good); }
+  .verdict.slip { border-color: var(--warn); }
+  .verdict.blunder { border-color: var(--bad); }
+  .verdict b { font-weight: 650; }
+  .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.blunder td { color: var(--bad); }
+  a { color: var(--pick); }
+  .empty { color: var(--dim); font-size: 13px; }
+  .tally { display: flex; gap: 18px; font-size: 13px; flex-wrap: wrap; }
+  .tally b { font-variant-numeric: tabular-nums; }
+
+  /* The after-the-hand review */
+  #review { margin-top: 14px; }
+  #review h3 { font-size: 14px; margin: 0 0 8px; font-weight: 650; }
+  .step { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .step.slip { border-color: var(--warn); }
+  .step.blunder { border-color: var(--bad); }
+  .step .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .step .head b { font-weight: 650; }
+  .step .held { color: var(--dim); font-size: 12px; }
+  .bars { display: grid; gap: 3px; margin-top: 7px; }
+  .bar {
+    display: grid; grid-template-columns: 74px 1fr 92px; gap: 8px; align-items: center;
+    font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  /* Blocks, not inline spans: a span ignores height and width, so the bars were
+     laying out as empty tracks with nothing in them. */
+  .bar .track { display: block; height: 14px; background: var(--line); border-radius: 3px; }
+  .bar .fill { display: block; height: 100%; border-radius: 3px; background: var(--dim); min-width: 2px; }
+  .bar.best .fill { background: var(--good); }
+  .bar.took .name { font-weight: 650; }
+  .bar.took .fill { background: var(--pick); }
+  .bar.took.bad .fill { background: var(--bad); }
+  .bar .gap { text-align: right; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Badugi drill</h1>
+  <p class="sub" id="sub">Play a hand against the solve. It plays its average strategy; you are told what each of your choices was worth.</p>
+
+  <div class="panel">
+    <div class="row spread">
+      <div class="row">
+        <label for="spot">Solve</label>
+        <select id="spot"></select>
+        <label for="seat">You play</label>
+        <select id="seat">
+          <option value="in">In position</option>
+          <option value="out">Out of position</option>
+          <option value="both">Alternate</option>
+        </select>
+        <label for="mode">Prices</label>
+        <select id="mode">
+          <option value="end">After the hand, every decision</option>
+          <option value="after">After each decision</option>
+          <option value="never">None, just play</option>
+          <option value="slow">After each decision, 10x the deals</option>
+        </select>
+        <label for="theme">Theme</label>
+        <select id="theme">
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+      <button id="deal" class="go">Deal</button>
+    </div>
+    <p class="note" id="status"></p>
+  </div>
+
+  <div class="panel" id="table" hidden>
+    <div class="seats">
+      <div class="seat">
+        <span class="who" id="theirWho">Them</span>
+        <div class="hand" id="theirHand"></div>
+        <span class="took" id="theirTook"></span>
+      </div>
+      <div class="seat">
+        <span class="who" id="myWho">You</span>
+        <div class="hand" id="myHand"></div>
+        <span class="took" id="myLabel"></span>
+      </div>
+    </div>
+    <div class="row spread" style="margin-top:14px">
+      <span class="took">Pot <b class="pot" id="pot">-</b> &middot; <span id="turn"></span></span>
+      <span class="took" id="jump"></span>
+    </div>
+    <div class="acts" id="acts"></div>
+    <div id="verdict"></div>
+    <div id="review"></div>
+  </div>
+
+  <div class="panel">
+    <div class="row spread" style="margin-bottom:10px">
+      <b style="font-size:14px">Hands played</b>
+      <span class="tally" id="tally"></span>
+    </div>
+    <div id="history"><p class="empty">Nothing yet.</p></div>
+  </div>
+</div>
+
+<script>
+const RANKS = '23456789TJQKA';
+const SUITS = 'cdhs';
+const SUIT_LETTER = { c: 'c', d: 'd', h: 'h', s: 's' };
+const GLYPH = { c: '♣', d: '♦', h: '♥', s: '♠' };
+// Badugi counts ranks from the ace, the deck counts from the deuce with the ace
+// on top. The ace is low here, so it is written as A and sorted as the lowest.
+const rankOf = (card) => card % 13;
+const suitOf = (card) => Math.floor(card / 13);
+const lowOf = (card) => (rankOf(card) + 1) % 13;
+const nameOf = (card) => RANKS[rankOf(card)];
+const suitChar = (card) => SUITS[suitOf(card)];
+
+const el = (id) => document.getElementById(id);
+const spotPick = el('spot');
+const seatPick = el('seat');
+const modePick = el('mode');
+const themePick = el('theme');
+
+/**
+ * Light, dark, or whatever the machine says.
+ *
+ * The stylesheet already knows all three: it goes dark under
+ * `prefers-color-scheme` unless `data-theme` says light, and dark outright when
+ * it says dark. So choosing is one attribute, and *not* choosing is the absence
+ * of it rather than a third palette.
+ */
+function applyTheme(value) {
+  if (value === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = value;
+  try {
+    if (value === 'system') localStorage.removeItem('drill-theme');
+    else localStorage.setItem('drill-theme', value);
+  } catch (error) { /* it just will not be remembered next time */ }
+}
+
+let state = null;      // the last state the server sent
+let id = null;         // the hand being played
+let line = [];         // every action so far, both seats
+let history = [];       // finished hands
+let mistakes = [];      // priced decisions that cost something, this hand
+let plays = [];         // every decision the player made this hand, priced or not
+let busy = false;
+let seats = null;       // what the solve calls its two seats, and which has position
+// Alternating is the client's job: the server is told a side, so somebody has to
+// decide which side this hand is. Counting deals rather than flipping a flag
+// keeps it honest across a spot change, which resets the count.
+let dealt = 0;
+
+/** Which side to ask for this hand, given what the picker says. */
+function sideNow() {
+  const want = seatPick.value;
+  if (want !== 'both') return want;
+  return dealt % 2 === 0 ? 'in' : 'out';
+}
+
+/** A card as a coloured pip, marked when it has just arrived. */
+function pip(card, fresh) {
+  const s = suitChar(card);
+  return `<span class="pip ${SUIT_LETTER[s]}${fresh ? ' fresh' : ''}">`
+    + `<span class="r">${nameOf(card)}</span><span class="u">${GLYPH[s]}</span></span>`;
+}
+const backs = (n) => Array.from({ length: n }, () => '<span class="pip back">'
+  + '<span class="r">?</span><span class="u">&nbsp;</span></span>').join('');
+
+/** Cards sorted the way a badugi player reads them: aces low. */
+const sorted = (cards) => [...cards].sort((a, b) => lowOf(a) - lowOf(b));
+
+const money = (v) => `${v >= 0 ? '+' : ''}${(v / 100).toFixed(2)}`;
+
+/**
+ * A request that waits for the solve rather than dying on it.
+ *
+ * The server reopens a solve when another page asks for a different one, and it
+ * answers `loading` while it does. A hand in progress that took that as a
+ * failure left the board frozen with its buttons disabled and nothing said -
+ * which is what this is for. Everything goes through here, so no caller has to
+ * remember.
+ */
+async function ask(params) {
+  for (let tries = 0; tries < 90; tries += 1) {
+    const query = new URLSearchParams({ spot: spotPick.value, ...params });
+    const out = await fetch(`/api/drill?${query}`).then((r) => r.json());
+    if (!out.loading) {
+      if (tries) say('');
+      return out;
+    }
+    say(`Opening the solve… ${Math.round((out.since ?? 0) / 1000)}s`);
+    await new Promise((go) => setTimeout(go, 1000));
+  }
+  return { ok: false, error: 'the solve did not come back' };
+}
+
+function say(text, kind) {
+  el('status').textContent = text ?? '';
+  el('status').style.color = kind === 'bad' ? 'var(--bad)' : 'var(--dim)';
+}
+
+/* ------------------------------------------------------------------ the hand */
+
+async function deal() {
+  if (busy) return;
+  busy = true;
+  el('deal').disabled = true;
+  say('Dealing…');
+  mistakes = [];
+  plays = [];
+  line = [];
+  el('verdict').innerHTML = '';
+  el('review').innerHTML = '';
+  const out = await ask({ do: 'deal', seat: sideNow() });
+  busy = false;
+  el('deal').disabled = false;
+  if (!out.ok) { say(out.error, 'bad'); return; }
+  id = out.id;
+  dealt += 1;
+  say('');
+  el('table').hidden = false;
+  await settle(out);
+}
+
+/**
+ * Shows a state, and if it is the opponent's turn, lets it move.
+ *
+ * The opponent's action is sampled here from the mix the server sent, so the
+ * client owns the whole line. That is what makes a hand replayable and linkable:
+ * the line in the history is exactly the line the viewer will open.
+ */
+async function settle(out) {
+  state = out;
+  line = out.line ?? line;
+  render();
+  if (out.over) { await finish(out); return; }
+  if (out.yours) return;
+  // Their turn. Sample from the solve's own mix for the hand it is holding.
+  const mix = out.theirMix ?? [];
+  let roll = Math.random();
+  let at = mix.length - 1;
+  for (let a = 0; a < mix.length; a += 1) {
+    roll -= mix[a];
+    if (roll < 0) { at = a; break; }
+  }
+  const label = out.node.actions[at]?.label ?? '?';
+  el('theirTook').textContent = `${out.node.who} ${label}`;
+  await new Promise((go) => setTimeout(go, 420));
+  const next = await ask({ do: 'state', id, line: [...line, at].join(',') });
+  if (!next.ok) { say(next.error, 'bad'); render(); return; }
+  await settle(next);
+}
+
+/**
+ * Files a priced decision, so the tally and the history agree with the review.
+ *
+ * Only when the gap clears two standard errors. Every arm is a measurement, and
+ * a hand of seven decisions each measured three hundredths of a bet below the
+ * best would otherwise be filed as a fifth of a bet given up - all of it noise,
+ * none of it a mistake, and the running total would climb for a player doing
+ * nothing wrong. The same gate the verdict uses, applied to the books.
+ */
+function fileMistake(play, priced) {
+  const chosen = priced.arms.find((arm) => arm.at === play.at);
+  if (!chosen || chosen.cost >= 0) return;
+  if (-chosen.cost <= 2 * (chosen.error ?? 0)) return;
+  mistakes.push({
+    what: play.what,
+    label: play.label,
+    best: priced.arms.find((arm) => arm.at === priced.best).label,
+    cost: chosen.cost,
+    error: chosen.error,
+    line: play.line,
+  });
+}
+
+/** The player takes an action: price it now if asked, note it either way, advance. */
+async function act(at) {
+  if (busy || !state || !state.yours) return;
+  busy = true;
+  el('verdict').innerHTML = '';
+  document.querySelectorAll('#acts button').forEach((b) => { b.disabled = true; });
+  const mode = modePick.value;
+
+  // Noted whatever the mode is, because "after the hand" has to be able to go
+  // back over decisions that were not priced when they were made. The line is
+  // the prefix that *reaches* this decision, which is what the pricer wants.
+  const play = {
+    line: line.join(','),
+    at,
+    label: state.node.actions[at].label,
+    actions: state.node.actions.map((a) => a.label),
+    what: state.node.drawing ? `${state.node.who} draw` : `${state.node.who} betting`,
+    cards: state.cards.slice(),
+    holding: state.label,
+    value: state.value,
+  };
+  plays.push(play);
+
+  if (mode === 'after' || mode === 'slow') {
+    say('Pricing…');
+    const priced = await ask({
+      do: 'price', id, line: play.line, deals: mode === 'slow' ? 20000 : 2000,
+    });
+    if (priced.ok) {
+      showPrice(priced, at);
+      fileMistake(play, priced);
+    }
+    say('');
+  }
+  busy = false;
+  const next = await ask({ do: 'state', id, line: [...line, at].join(',') });
+  if (!next.ok) { say(next.error, 'bad'); render(); return; }
+  await settle(next);
+}
+
+/**
+ * Every decision of the hand, priced once it is over.
+ *
+ * Pricing as you go tells you about a decision while the next one is still in
+ * front of you, which is the wrong order for learning a hand: you cannot see the
+ * draw you made in light of the bet you made after it. So this waits, plays the
+ * hand out uninterrupted, and then goes back over the lot - the same measurement
+ * either way, presented as a hand rather than as a series of interruptions.
+ *
+ * It is done one at a time on purpose. Each is a couple of thousand play-outs
+ * and the server walks them synchronously, so firing them together would only
+ * queue them behind each other and lose the running count.
+ */
+async function reviewHand() {
+  if (!plays.length) return;
+  const rows = [];
+  for (const [n, play] of plays.entries()) {
+    say(`Pricing decision ${n + 1} of ${plays.length}…`);
+    const priced = await ask({ do: 'price', id, line: play.line, deals: 2000 });
+    if (!priced.ok) continue;
+    fileMistake(play, priced);
+    rows.push({ play, priced });
+  }
+  say('');
+  showReview(rows);
+}
+
+async function finish(out) {
+  el('acts').innerHTML = '';
+  el('turn').textContent = 'hand over';
+  // The review comes first so the history row it writes carries what the review
+  // found - otherwise a hand priced afterwards would be filed as faultless.
+  if (modePick.value === 'end') await reviewHand();
+  history.unshift({
+    won: out.won,
+    label: out.label,
+    cards: out.cards,
+    theirs: out.showdown,
+    ending: out.ending,
+    line: (out.line ?? []).join(','),
+    mistakes: mistakes.slice(),
+    lost: mistakes.reduce((sum, m) => sum + m.cost, 0),
+  });
+  renderHistory();
+}
+
+/* -------------------------------------------------------------------- render */
+
+function render() {
+  const s = state;
+  el('myWho').textContent = `You (${s.who})`;
+  el('theirWho').textContent = s.against;
+  el('myHand').innerHTML = sorted(s.cards).map((c) => pip(c, false)).join('');
+  el('myLabel').textContent = s.label ?? '';
+  el('theirHand').innerHTML = s.over && s.showdown
+    ? sorted(s.showdown).map((c) => pip(c, false)).join('')
+    : backs(4);
+  el('pot').textContent = s.node ? (s.node.pot / 100).toFixed(2) : '-';
+  el('turn').textContent = s.over ? 'hand over' : (s.yours ? 'your move' : `${s.node.who} to act`);
+  el('jump').innerHTML = `<a href="/badugi.html?spot=${encodeURIComponent(spotPick.value)}`
+    + `&line=${encodeURIComponent((s.line ?? []).join(','))}`
+    + `&hand=${s.value}" target="_blank">open this node in the viewer &rarr;</a>`;
+  // The verdict is deliberately *not* cleared here. Rendering happens again the
+  // moment the action is taken, and clearing it there wiped the answer off the
+  // screen before it could be read - the one thing the drill exists to show. It
+  // is cleared when the next decision is made instead, and when a hand is dealt.
+
+  if (s.over || !s.yours) { el('acts').innerHTML = ''; return; }
+  el('acts').innerHTML = s.node.actions.map((a, at) => {
+    // No frequency on the button. The mix is the answer, and a drill that prints
+    // it beside the choice is a reading exercise - what is wanted is the guess
+    // first and the answer after it, which is what the verdict is for.
+    return `<button class="act" data-at="${at}">${a.label}</button>`;
+  }).join('');
+  el('acts').querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => act(Number(b.dataset.at)));
+  });
+}
+
+/** The price table, folded into the buttons and stated underneath. */
+function showPrice(priced, chose) {
+  const arms = priced.arms;
+  el('acts').querySelectorAll('button').forEach((b) => {
+    const at = Number(b.dataset.at);
+    const arm = arms.find((x) => x.at === at);
+    if (!arm) return;
+    b.classList.toggle('best', at === priced.best);
+    const level = Math.abs(arm.cost) <= 2 * (arm.error ?? 0);
+    b.insertAdjacentHTML('beforeend',
+      `<span class="ev ${arm.cost < 0 && !level ? 'loss' : 'level'}">`
+      + `${arm.cost === 0 ? 'best' : money(arm.cost)}</span>`);
+  });
+  const arm = arms.find((x) => x.at === chose);
+  const best = arms.find((x) => x.at === priced.best);
+  if (!arm) return;
+  // Inside two standard errors of the best is not a mistake, it is a
+  // measurement that cannot tell them apart - and saying otherwise is how a
+  // drill teaches something untrue.
+  const level = Math.abs(arm.cost) <= 2 * (arm.error ?? 0);
+  const kind = level ? 'ok' : (-arm.cost > 25 ? 'blunder' : 'slip');
+  const verdict = arm.at === priced.best
+    ? `<b>Best.</b> ${arm.label} measured highest of the ${arms.length} here.`
+    : level
+      ? `<b>Fine.</b> ${arm.label} and ${best.label} are within the measurement of each other.`
+      : `<b>${-arm.cost > 25 ? 'Blunder' : 'Slip'}.</b> ${arm.label} costs `
+        + `<b>${money(arm.cost)}</b> big blinds against ${best.label}.`;
+  el('verdict').innerHTML = `<div class="verdict ${kind}">${verdict}`
+    + `<div class="note">${priced.deals.toLocaleString()} play-outs an action, `
+    + `&plusmn;${((arm.error ?? 0) / 100).toFixed(2)} on this one. `
+    + `The solve plays it ${(100 * (state.mix?.[chose] ?? 0)).toFixed(0)}% of the time.</div></div>`;
+}
+
+/**
+ * The whole hand, decision by decision, once it is over.
+ *
+ * Bars rather than a table of numbers: the question a player has is "how much
+ * worse was mine", and a length answers that before a number does. They are
+ * drawn from the worst option to the best, so the scale is the spread of what
+ * was actually on offer at that decision rather than an absolute nobody has a
+ * feel for.
+ */
+function showReview(rows) {
+  if (!rows.length) { el('review').innerHTML = ''; return; }
+  // Only what cleared the measurement counts toward the total, for the same
+  // reason a single decision inside it is called fine rather than a slip.
+  const total = rows.reduce((sum, r) => {
+    const took = r.priced.arms.find((a) => a.at === r.play.at);
+    if (!took || took.cost >= 0 || -took.cost <= 2 * (took.error ?? 0)) return sum;
+    return sum + took.cost;
+  }, 0);
+  el('review').innerHTML = `<h3>The hand, decision by decision `
+    + `&mdash; ${total < 0 ? `${money(total)} bb given up` : 'nothing outside the measurement'}</h3>`
+    + rows.map(({ play, priced }) => {
+      const took = priced.arms.find((a) => a.at === play.at);
+      const level = took && Math.abs(took.cost) <= 2 * (took.error ?? 0);
+      const kind = !took || level || took.cost >= 0 ? '' : (-took.cost > 25 ? 'blunder' : 'slip');
+      const worst = Math.min(...priced.arms.map((a) => a.ev));
+      const best = Math.max(...priced.arms.map((a) => a.ev));
+      const span = Math.max(1, best - worst);
+      return `<div class="step ${kind}">
+        <div class="head">
+          <b>${play.what}</b>
+          <span>played <b>${play.label}</b></span>
+          <span class="held">holding ${sorted(play.cards).map((c) => pip(c, false)).join('')}
+            ${play.holding}</span>
+        </div>
+        <div class="bars">${priced.arms.map((arm) => {
+    const mine = arm.at === play.at;
+    const top = arm.at === priced.best;
+    return `<div class="bar${top ? ' best' : ''}${mine ? ' took' : ''}${mine && kind ? ' bad' : ''}">
+              <span class="name">${arm.label}</span>
+              <span class="track"><span class="fill"
+                style="width:${(100 * (arm.ev - worst) / span).toFixed(1)}%"></span></span>
+              <span class="gap">${arm.at === priced.best ? 'best' : money(arm.cost)}</span>
+            </div>`;
+  }).join('')}</div>
+        <div class="note">&plusmn;${((took?.error ?? 0) / 100).toFixed(2)} on the one played,
+          ${priced.deals.toLocaleString()} play-outs an action.
+          <a href="/badugi.html?spot=${encodeURIComponent(spotPick.value)}&line=${encodeURIComponent(play.line)}&hand=${play.value}" target="_blank">open in the viewer &rarr;</a></div>
+      </div>`;
+    }).join('');
+}
+
+function renderHistory() {
+  const tally = history.reduce((acc, h) => ({
+    hands: acc.hands + 1,
+    won: acc.won + h.won,
+    lost: acc.lost + h.lost,
+    slips: acc.slips + h.mistakes.length,
+  }), { hands: 0, won: 0, lost: 0, slips: 0 });
+  el('tally').innerHTML = `<span>hands <b>${tally.hands}</b></span>`
+    + `<span>net <b>${money(tally.won)}</b> bb</span>`
+    + `<span>given up <b>${money(tally.lost)}</b> bb</span>`
+    + `<span>flagged <b>${tally.slips}</b></span>`;
+  if (!history.length) { el('history').innerHTML = '<p class="empty">Nothing yet.</p>'; return; }
+  el('history').innerHTML = `<table><thead><tr>
+      <th>your hand</th><th>theirs</th><th>ended</th>
+      <th class="num">won</th><th class="num">given up</th><th>worst choice</th><th></th>
+    </tr></thead><tbody>${history.map((h) => {
+    const worst = h.mistakes.slice().sort((a, b) => a.cost - b.cost)[0];
+    return `<tr class="${h.lost < -25 ? 'blunder' : ''}">
+        <td>${sorted(h.cards).map((c) => pip(c, false)).join('')} ${h.label}</td>
+        <td>${h.theirs ? sorted(h.theirs).map((c) => pip(c, false)).join('') : ''}</td>
+        <td>${h.ending}</td>
+        <td class="num">${money(h.won)}</td>
+        <td class="num">${h.lost ? money(h.lost) : ''}</td>
+        <td>${worst ? `${worst.label} instead of ${worst.best} (${money(worst.cost)})` : ''}</td>
+        <td><a href="/badugi.html?spot=${encodeURIComponent(spotPick.value)}&line=${encodeURIComponent(h.line)}" target="_blank">viewer</a></td>
+      </tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+/* ---------------------------------------------------------------------- boot */
+
+async function start() {
+  // Only the solves that begin where a hand begins: a drill that dropped the
+  // player into a spot somebody else had already raised into would be asking
+  // them to defend a decision they never made.
+  const response = await fetch('/api/badugi-solves?whole=1');
+  const { solves } = await response.json();
+  const list = solves.length ? solves : ['sb-bb'];
+  spotPick.innerHTML = list.map((s) => `<option value="${s}">${s}</option>`).join('');
+  const asked = new URLSearchParams(location.search).get('spot');
+  if (asked && list.includes(asked)) spotPick.value = asked;
+  themePick.value = document.documentElement.dataset.theme || 'system';
+  themePick.addEventListener('change', () => applyTheme(themePick.value));
+  await fillSeats();
+  spotPick.addEventListener('change', fillSeats);
+  el('deal').addEventListener('click', deal);
+}
+
+/**
+ * Which seats a solve has, and which of them has position - asked, not assumed.
+ *
+ * A subgame's live seats are two of six and are not seats 0 and 1, and which of
+ * them acts last after the draw depends on the spot. So the picker keeps its
+ * three fixed choices and only borrows the seat's real name for the label: "In
+ * position (BB)" says both the thing being drilled and the seat it happens to
+ * be, which is what makes the answer transferable to a table.
+ */
+async function fillSeats() {
+  const chosen = seatPick.value;
+  const out = await ask({ do: 'seats' });
+  if (!out.ok) { say(out.error, 'bad'); return; }
+  say('');
+  seats = out;
+  dealt = 0;
+  el('sub').textContent = `${out.what} — ${out.iterations.toLocaleString()} iterations. `
+    + 'The solve plays its average strategy; every choice of yours can be priced.';
+  const named = (side) => {
+    const found = (out.seats ?? []).find((s) => s.position === side);
+    return found ? ` (${found.who})` : '';
+  };
+  seatPick.innerHTML = `<option value="in">In position${named('in')}</option>`
+    + `<option value="out">Out of position${named('out')}</option>`
+    + '<option value="both">Alternate</option>';
+  seatPick.value = chosen || 'in';
+}
+
+start();
+</script>
+</body>
+</html>

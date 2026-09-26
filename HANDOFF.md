@@ -856,24 +856,170 @@ can never be a badugi, and is the hand a player would guess snows - pats **0%**
 of the time at every node where it is live, because an ace with three fresh
 cards is the best draw in the deck.
 
+## Heads-up badugi, and the opening range that will not settle
+
+`lib/badugi-headsup.js` is the whole game rather than a subgame: two seats, a
+full deck behind them, no prefix. 1,351,651 nodes and 13.5 GB at draws 4,3,2
+with four bets a round. **500 million iterations, five hours**, against the 30.9
+days the same billion would have cost before the algorithm work below.
+
+### What the algorithm does now, and what each piece bought
+
+Three changes, all measured, all switchable:
+
+- **Regret-based pruning.** An action whose strategy probability is exactly zero
+  *and* whose regret is further below zero than one iteration could recover
+  contributes nothing to its node's value and cannot change what is played next
+  iteration either. Skipping it is sound; the regret goes stale, and the
+  discount step walking it back toward zero is the clock that un-prunes it.
+  Measured on the converged 160M `sb-bb`: **14.5x the rate, 97.5% fewer nodes
+  walked**, at 19.9% of action edges skipped. The saving compounds because
+  skipping near the root removes a whole subtree.
+
+  **It is a trade, not a free lunch.** On-path visits go up 14.5x; subtrees
+  reachable only through a pruned action go *down* to 0.29x. That is what
+  `revisit` is for and why it does not fade with epsilon - the average strategy
+  accumulates at the *other* seat's decisions, so a subtree nobody enters is one
+  where the opponent never learns a strategy, and then the pruned action is
+  priced against a random opponent and stays pruned.
+
+  **It earns nothing cold.** From empty tables it was 1.03x and skipped 3.1% of
+  edges; the whole 14.5x is a late-run effect. Do not quote it as a speedup for
+  a run that has not started.
+
+- **The discount step runs on every thread.** It rewrites every regret with
+  nothing walking, so it was the main thread's alone while twenty others waited.
+  The blocks are packed end to end in the shared buffer, so a slice of the
+  buffer is a slice of the work: no overlap, no ordering, nothing to lock. Also
+  one sequential pass instead of 627,000 short ones through as many views.
+
+- **Exploration decays to a floor.** Epsilon halves every 200 discount steps and
+  stops at `exploreFloor`, default 0.005. **The floor is not optional and the
+  first run without one showed why**: DCFR discounts positive regret by
+  `t^alpha/(t^alpha+1)`, which at ten thousand steps is indistinguishable from
+  one, so regret banked early for folding a hand never decays. A two-card 8-A
+  held **+166,960 of regret for folding** and raised 6.9% of the time while
+  raising was worth 0.07 big blinds more. Only fresh evidence overturns that,
+  and epsilon had fallen to 0.0004.
+
+### The opening range disagrees with itself, and it is not the averaging
+
+A reputable source puts the small blind's RFI at 80% in the same raise-or-fold
+game. Ours opens 63.8%. Most of a day went into that gap; here is what is
+established, because several plausible answers are now ruled out.
+
+**The range contradicts itself.** Scoring every pair of two-card hands where one
+dominates the other outright:
+
+| solve | pairs backwards | deck misordered |
+| --- | --- | --- |
+| `sb-bb` 160M | 12.6% | 58.70% |
+| `hu` 500M | 15.4% | 61.64% |
+| `hu-200M` | 21.4% | 79.10% |
+
+It opens K-A 100% and folds 8-A 93%, which is the better hand. **This predates
+pruning and the exploration decay** - it is in `sb-bb`, which used neither - so
+it is not those. It improves with iterations at about `T^-0.36`, which means
+halving it needs seven times the run.
+
+**It is not the average either.** Gamma is 2, so the average is close to a
+snapshot of wherever the strategy was; the obvious suspicion is that a longer
+memory would smooth it. Reading the *current* strategy straight off the regrets
+says otherwise: half as many backwards pairs, but the **same deck-weighted
+misordering**. The average spreads the same contradictions over more pairs at
+lower intensity. Expect little from gamma.
+
+**Frequency is barely determined.** A best response measured against this solve's
+own big blind says raising is *not measurably worse* than folding across **92.8%
+of the deck**. Folding is worth exactly -50 and raising a marginal two-card hand
+is worth about -50. On a plateau like that a non-monotone range is a legitimate
+equilibrium and regret matching has no reason to prefer a tidy one.
+
+**And 80% is worth less, against this opponent.** Every rule priced on the same
+deals, in hundredths of a big blind a hand against always folding:
+
+| rule | opens | value | vs the solve |
+| --- | --- | --- | --- |
+| the solve itself | 63.8% | +42.37 | +0.00 |
+| badugis + tris only | 63.4% | +29.29 | **-13.08** |
+| + two-card to 7-high | 81.5% | +36.04 | -6.33 |
+| every hand | 100.0% | +33.74 | -8.63 |
+| best response | 62.3% | +44.05 | +1.68 |
+
+Two things fall out. No opening rule can gain more than **1.68 bb/100**, so the
+whole argument is over less than two big blinds a hundred. And **composition
+beats frequency two to one**: a natural "all badugis and tris" range at the
+solve's own 63.4% is 13 bb/100 worse than what the solve actually opens. Arguing
+about the percentage is arguing about the wrong number.
+
+**What is genuinely off is the big blind.** It defends 96.3% where its own best
+response defends 93.2% and the source says 90%, and the excess is in the worst
+two-card hands - T-high defends 90% where 67% is right, K-high 91% against 65%.
+A big blind folding 10% instead of 3.7% hands the small blind roughly the same
+order of fold equity as the 6.33 gap above, so **this is the one thread that
+could still move the answer**.
+
+**A short run opens 80%.** `sb-bb` at 12M iterations opens **83.9%**; the same
+game at 160M opens 69.4%. The frequency falls as the solve converges, because
+marginal hands have not yet banked the regret that tells them raising loses. If
+the source's solver ran ten million iterations, 80% is exactly what it would
+say.
+
+### How to argue with any of this
+
+Everything above is one script each, and they answer different questions:
+
+```bash
+npm run badugi:ranges -- --spot hu          # what the range is
+```
+
+The rest live in the scratchpad rather than in `scripts/`, because each was
+written to settle one argument: `rfi.mjs` sweeps fold against raise on the same
+cards and files the difference by class, `compare-rfi.mjs` prices candidate
+opening rules against each other from that sweep, `bbdefend.mjs` does the same
+for the big blind's defence, `indifference.mjs` prices one named class at a
+time, and `mono.mjs` scores how much of the deck sits on the wrong side of a
+dominated pair. Promote any of them if the question comes back.
+
+**The sweep is the trick worth keeping.** Do not price classes one at a time:
+deal, play both actions out on the same cards with the same dice, and file the
+difference under whatever was dealt. One pass gives every class samples in
+proportion to how often it is dealt, which is also the weighting the answer
+wants - 400,000 deals in under four minutes against hours the other way.
+
 ## What I would do next
 
-1. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
+1. **Reconstruct the source's big blind and price our opening range against it.**
+   Every measurement of the 63.8% against 80% argument so far has been against
+   our own big blind, which is the one seat that is demonstrably off - 96.3%
+   where its own best response is 93.2%. Their defence frequency plus their
+   3-bet frequency is enough to build a stand-in, and that is the only test that
+   settles this rather than adding another consistent-but-circular number.
+2. **Re-run heads-up with the exploration floor**, which is in but has never been
+   run. About five hours for 500M. `badugi-hu-200M` and the current `badugi-hu`
+   both survive as comparisons.
+3. **Finish the averaging arms.** `scratchpad/averaging.mjs` runs gamma 1, gamma
+   0 and CFR+ against the gamma 2 baseline already measured - 83.9% open, 12.8%
+   of pairs backwards at 12M. Expect little, since the current strategy is
+   already as misordered as the average by deck weight, but it is cheap to be
+   sure and CFR+ is the one arm that changes the regret dynamics rather than the
+   average.
+4. **Measure the snow.** Run `rfi.mjs --joint` and look at 8-8-3-3-3 with its
    visit count. It is the cheapest open question and the answer is interesting
    either way.
-2. **Re-measure the call-off width** facing a shove, now that open-shoving is
+5. **Re-measure the call-off width** facing a shove, now that open-shoving is
    gone and the ante is in. If it is still 27%, find out why before trusting any
    range.
-3. ~~**Re-read RFI on a DCFR solve.**~~ Done: 19 / 21 / 27 / 38 at NashConv 22,
+6. ~~**Re-read RFI on a DCFR solve.**~~ Done: 19 / 21 / 27 / 38 at NashConv 22,
    so the gap is not convergence.
-4. ~~**Add a second 3-bet size.**~~ Done, and it did not move RFI - see above.
+7. ~~**Add a second 3-bet size.**~~ Done, and it did not move RFI - see above.
    `--open` and `--three-bet` set the sizing, and `--also` serves a second
    structure beside the first, which the viewer switches between - the way to
    see what a sizing changed, a line at a time.
-5. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
+8. **Try a larger DCFR step** (100k, 200k) with `--every`; 10k to 50k was worth
    more than CFR+ to DCFR.
-6. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
-7. **Re-key the draw buckets on outs, not on the best hand they could make.**
+9. **6-max / 7-max switching**, which is now mostly plumbing since solves store.
+10. **Re-key the draw buckets on outs, not on the best hand they could make.**
    A draw bucket is named for the best hand its keep could finish as, which is
    not how often it finishes. `D1 76` spans 4 to 12 outs of 48, because 7-6-5-4
    makes a seven only with a deuce - the three and the eight are both straights -
@@ -901,13 +1047,13 @@ cards is the best draw in the deck.
    and forty minutes, most of it the 100M one. `HANDOFF.md` quotes 146 twice in
    the vectorised CFR argument, where the number is the size of an equity matrix
    and would become 152.
-8. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
+11. **A hand ranking page for badugi**, the way `index.html` ranks the 7,462 2-7
    hands. Shelved on purpose rather than forgotten: the 1,092 values already
    exist in `lib/badugi.js` with their labels and combination counts, so this is
    a page over data that is already computed, and the solve is worth having
    first. Badugi is easier to rank than 2-7 - size then lowness, with no draw
    policy to agree on - so most of `lib/ranking.js` has no counterpart here.
-9. **Exploitability for badugi**, before six-handed is run for real. Four hours
+12. **Exploitability for badugi**, before six-handed is run for real. Four hours
    of solving produces a strategy nothing can currently check: the smoke run
    above opens the button tighter than UTG, which is either a starved
    information set or a bug, and there is no measurement in the repo that tells
@@ -916,13 +1062,13 @@ cards is the best draw in the deck.
    so this is a second implementation against `BadugiSolver`, not a parameter.
    It is the one thing worth building before the long run rather than after it,
    because badugi is the game whose whole purpose is being checkable.
-10. **Sweep the later decisions the way the first one is swept.** `badugi-sweep.mjs`
+13. **Sweep the later decisions the way the first one is swept.** `badugi-sweep.mjs`
    prices the root only, and the root is the decision with the most traffic - the
    draws and the post-draw betting are thinner and have had no such check. The
    walk generalises: force the action at any node and play the rest out. What it
    needs is a way to condition the deal on arriving there, which for anything
    past a draw is rejection sampling and therefore slow.
-11. **Shard `buildTree`'s `seen` map** if the game ever needs to be wider than
+14. **Shard `buildTree`'s `seen` map** if the game ever needs to be wider than
    `maxToDraw: 2`. V8 caps a `Map` at 2^24 entries and six-handed at
    `maxToDraw: 3` hits that ceiling after 82 seconds, at any heap size. This is
    only worth doing if something actually needs it - and note that the tree

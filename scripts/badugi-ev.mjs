@@ -29,7 +29,7 @@ import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, handFacts } from '../lib/badugi-benchmark.js';
 import { loadBadugi } from '../lib/badugi-checkpoint.js';
 import { makeRng } from '../lib/cards.js';
-import { SPOTS } from '../lib/badugi-spots.js';
+import { SPOTS, presetFor } from '../lib/badugi-spots.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -64,7 +64,7 @@ const solver = new BadugiSolver({
   seed: Number(flag('seed', 21)),
   trackEv: false,
   explore: Number(flag('explore', 0.02)),
-  presetRanges: { [btn]: buttonOpeningRange() },
+  presetRanges: presetFor(key, btn, buttonOpeningRange()),
 });
 
 // A labelled variant has its own checkpoint, so an experiment is never read
@@ -125,7 +125,7 @@ for (let n = 0; n < deals; n += 1) {
   const hand = hands[dealt];
   const label = hand.size >= 3
     ? `${NAME[hand.ranks[0]]}-high ${SIZE[hand.size]}`
-    : `${SIZE[hand.size]} ${hand.ranks.map((r) => NAME[r]).reverse().join('')}`;
+    : `${SIZE[hand.size]} ${hand.ranks.map((r) => NAME[r]).join('')}`;
   if (!byClass.has(label)) {
     byClass.set(label, { label, size: hand.size, ranks: hand.ranks, n: 0, sum: 0 });
   }

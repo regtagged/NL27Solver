@@ -279,3 +279,98 @@ of zero, which is a search that never started rather than a solve with nothing
 to give away. And the seats run one after another rather than one to a thread,
 because the strategy tables are 5.59 GB six-handed and a worker would need its
 own copy.
+
+#### Heads-up badugi, solved whole
+
+Every spot above is a *subgame*: a six-handed tree with a fixed prefix, two
+seats left live, and four seats' hole cards dealt and thrown away. That is the
+right shape for "how should the big blind play against a button open" and it is
+not the heads-up game. Two differences, and the first is the bigger one:
+
+- **The deck.** A six-handed subgame deals 24 hole cards, so 16 cards a heads-up
+  table leaves live are dead. Card removal is most of what a badugi hand is
+  worth.
+- **The button completes.** The small blind *is* the button here, and folding or
+  raising is not the whole of its choice.
+
+```bash
+npm run badugi:headsup -- --probe 120          # what the rate is, before committing days
+npm run badugi:headsup -- --iterations 200000000
+```
+
+`lib/badugi-headsup.js` holds the game and the measured table of what each dial
+costs. The default is 1,351,651 nodes and **13.5 GB** of tables: every draw from
+standing pat to taking four on the first draw, four bets a round, played to
+showdown, no hand abstraction. Two prunings are chosen for time and say so —
+no completing, and the later draws capped at three and two.
+
+`--probe` reads any existing checkpoint first, because pruning earns nothing on
+an empty table and a rate measured from one is a measurement of the algorithm
+without the feature in it. `--label` gives a variant its own checkpoint, so
+trying a wider tree does not throw away the hours spent on the narrower one.
+
+#### Playing against a solve
+
+```bash
+npm start        # then http://localhost:43195/drill.html
+```
+
+The drill deals a hand, plays the other seat from the solve's average strategy,
+and prices what you did. Nothing on disk says what an action is *worth* -
+`trackEv: false` everywhere, because per-hand EV tables are another random write
+into another big block at every visit - so `lib/badugi-price.js` measures it:
+deal the rest of the deck around the four cards you hold, weight the deal by how
+often the opponent would have played the prefix it played, then take each action
+in turn and play the hand out. Two thousand play-outs an action is about half a
+second and an error near 0.15 of a big blind.
+
+**An action inside two standard errors of the best is reported as fine, not as a
+mistake.** Every arm is a measurement, and a drill that calls noise a blunder
+teaches something untrue. The same gate applies to the running totals, or a hand
+of seven decisions each measured a hundredth below the best would be filed as a
+fifth of a bet given up.
+
+Prices can come after each decision or after the hand, whichever suits: the
+second plays out uninterrupted and then shows every decision as bars scaled from
+the worst option to the best, which answers "how much worse was mine" before a
+number does. Four-colour deck, in position or out or alternating, dark mode, and
+every decision links into the viewer at that node holding that hand.
+
+Only solves that begin where a hand begins are offered. A spot starting after
+somebody has already raised would hand the player a decision they never made.
+
+#### Reading a range out of a solve
+
+```bash
+npm run badugi:ranges -- --spot hu            # the opening range
+npm run badugi:ranges -- --spot hu --line 1   # the big blind against it
+```
+
+Two summaries, because a range has two honest ones. The **shape** is what it
+does with each family, which is how a player holds a range in their head. The
+**edges** are the classes it splits on, which is where the information is: that
+it raises every badugi is not news, and the twenty classes it is genuinely
+mixing on are the strategy.
+
+Frequencies are weighted by combinations rather than by class. There are 1,092
+classes and they are nowhere near equally likely — a 4-high badugi is dealt once
+in twenty thousand hands and a two-card 2-A once in seventy — so an average over
+classes is not an average over hands.
+
+#### Hands you actually played
+
+```bash
+npm run badugi:history -- --file "export.txt"           # what the solve does with them
+npm run badugi:draws   -- --file "export.txt" --high J,Q  # and what the alternatives were worth
+```
+
+`lib/badugi-history.js` reads a Phenom Poker export and lines each hand up with
+a solve. A hand can be priced for the hero and nobody else, and only while it
+still holds what it was dealt: the moment it draws, the hand it is playing is
+four cards nobody wrote down, and that is reported as unknown rather than
+guessed at.
+
+The two orderings meet here and getting it wrong does not throw — a hand history
+counts ranks from the ace and names suits `shdc`, the deck counts from the deuce
+and names them `cdhs` — so all 52 cards round-tripping through that bridge is a
+test.

@@ -21,9 +21,9 @@ import { stateAfter, positionNames } from '../lib/tree.js';
 import { BadugiSolver, badugiConfig } from '../lib/badugi-solve.js';
 import { buttonOpeningRange, rangeByShare, describeRange } from '../lib/badugi-benchmark.js';
 import { badugiTable } from '../lib/badugi.js';
-import { loadBadugi } from '../lib/badugi-checkpoint.js';
+import { openBadugi } from '../lib/badugi-checkpoint.js';
 import { walkSpots, buildReport } from '../lib/badugi-report.js';
-import { spotNamed } from '../lib/badugi-spots.js';
+import { spotNamed, presetFor } from '../lib/badugi-spots.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -55,18 +55,19 @@ const btnRange = argv.includes('--btn-range')
   ? rangeByShare(number('btn-range'))
   : buttonOpeningRange();
 
+const preset = presetFor(key, btn, btnRange);
 const solver = new BadugiSolver({
   config,
   from: stateAfter(config, spot.line),
   seed: number('seed', 21),
   trackEv: false,
   explore: number('explore', 0.02),
-  presetRanges: { [btn]: btnRange },
+  presetRanges: preset,
 });
 
 const label = flag('label', null);
 const slug = label ? `${key}-${label}` : key;
-const head = loadBadugi(solver, resolve(here, '..', 'solves', `badugi-${slug}`));
+const head = openBadugi(solver, resolve(here, '..', 'solves', `badugi-${slug}`));
 if (!head) throw new Error(`no checkpoint for ${slug}; solve it first`);
 if (head.mismatch) throw new Error(`the checkpoint describes a different game (${head.mismatch})`);
 
@@ -81,7 +82,7 @@ const out = buildReport(solver, {
   what: spot.what,
   line: spot.line,
   config,
-  preset: { seat: btn, share: btnRange.share },
+  preset: preset ? { seat: btn, share: btnRange.share } : null,
   labels,
   combos,
   names,
@@ -106,4 +107,6 @@ for (const line of out.spots) {
   const text = line.actions.map((a, i) => `${a.label} ${line.overall[i].toFixed(1)}%`).join('  ');
   console.log(`  ${line.what.padEnd(22)} ${text}${line.reach ? '' : '   (weighted by the deck)'}`);
 }
-console.log(`\n  The button was dealt ${btnRange.share.toFixed(1)}%: ${describeRange(btnRange)}.`);
+console.log(preset
+  ? `\n  The button was dealt ${btnRange.share.toFixed(1)}%: ${describeRange(btnRange)}.`
+  : '\n  No range was preset: both seats were still to act, so both strategies are solved.');

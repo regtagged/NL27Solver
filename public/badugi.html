@@ -23,6 +23,9 @@
     --pat: #b5862b;
   }
   * { box-sizing: border-box; }
+  /* A class with a display beats the user agent's [hidden] rule on specificity,
+     so the attribute stops working exactly where it is relied on. */
+  [hidden] { display: none !important; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -69,13 +72,6 @@
     border-color: var(--accent); color: var(--ink);
     box-shadow: 0 0 0 1px var(--accent) inset;
   }
-  /* A branch heading breaks the row of decisions, so the snows read as a line
-     of their own rather than as more of the main line. */
-  .branch {
-    flex: 0 0 100%; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--ink-3); font-weight: 600; margin: 8px 0 0;
-  }
-  .branch:first-child { margin-top: 0; }
   .step .who { display: block; font-weight: 600; color: inherit; }
   .step .mix { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
 
@@ -83,10 +79,39 @@
   th, td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
   thead th { color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
+  /* The headers sort the hands inside an open class. Only the drill-down: the
+     classes themselves stay in hand order, because that order is what makes the
+     table readable as a range rather than as a list. */
+  thead th.sorts { cursor: pointer; user-select: none; white-space: nowrap; }
+  thead th.sorts:hover { color: var(--ink); }
+  thead th.sorts:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  thead th.sorts .dir { color: var(--accent); margin-left: 4px; }
+  thead th.sorts.on { color: var(--ink); }
   tbody tr:hover { background: var(--chip); }
   tr.group-start td { border-top: 2px solid var(--line); }
   td.hand { font-weight: 600; white-space: nowrap; }
   td.combos { color: var(--ink-3); font-size: 12px; }
+
+  /* Range weighted: every bar as wide as the share of the range it is.
+
+     A five-high badugi is a fortieth of a percent of what arrives and should
+     look like it - a sliver beside the ten percent that is a king-high tri.
+     Read down the column and the shape of the range is the shape of the table,
+     which no column of numbers gets across. The mix inside each bar is still
+     drawn to its own proportions, so a narrow bar is a small part of the range
+     played some way, not a small number. */
+  table.weighted .bar { width: var(--w); min-width: 3px; border-radius: 1px; }
+  table.weighted .bar i { min-width: 0; }
+  /* The labels inside the segments are meaningless once a bar is a few pixels
+     across, and worse than meaningless when they overflow it. */
+  table.weighted .bar i { font-size: 0; }
+  table.weighted td.strategy { width: 46%; }
+
+  .weigh {
+    display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+    font-size: 12px; color: var(--ink-2); margin-left: auto;
+  }
+  .weigh input { accent-color: var(--accent); }
 
   /* A hand's strategy as one bar, so a column of them reads as a range rather
      than as a table of numbers. Widths are the frequencies themselves. */
@@ -130,6 +155,16 @@
   tr.member .bar { height: 13px; opacity: .88; }
   tr.member td.combos { font-size: 11px; }
 
+  /* A class that is really here but barely - a four-high badugi that called a
+     three-bet 0.3% of the time - is a true row and a misleading one at full
+     strength, because a table is read down the left edge and it sits there
+     looking like the rest. */
+  tr.klass.rare td { opacity: .45; }
+  tr.klass.rare td.hand::after {
+    content: "rare"; margin-left: 8px; font-size: 9px; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+  }
+
   /* How far a class disagrees with itself, on the class row - the reason to
      open one, shown without having to open every one. */
   .solve { display: flex; align-items: stretch; gap: 0; }
@@ -146,6 +181,100 @@
     margin-left: 8px; font-size: 10px; font-weight: 600; padding: 1px 5px;
     border-radius: 999px; color: var(--pat); border: 1px solid var(--pat);
   }
+
+  /* Following the action.
+
+     The seat strip is the navigation, the way ICMDB does it: a decision belongs
+     to a seat, so the question is "what does the big blind do here" rather than
+     "what is node 4". Each seat card carries what that seat has already done -
+     every one a way back to where it did it - and the seat to act carries what
+     it may do next. Badugi runs to four betting rounds and three draws, so a
+     seat's column is a list where a push-fold table has a single line. */
+  .nav { padding: 14px; }
+  .seats { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+  .seat {
+    flex: 0 1 auto; min-width: 132px;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 9px;
+    padding: 8px 9px; display: flex; flex-direction: column; gap: 1px;
+  }
+  .seat.acting { border-color: var(--call); box-shadow: 0 0 0 1px var(--call) inset; }
+  .seat.out { opacity: .5; min-width: 78px; }
+  .seat .who {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    margin-bottom: 5px;
+  }
+  .seat .pos { font-weight: 700; font-size: 12px; letter-spacing: .04em; }
+  .seat.acting .pos { color: var(--call); }
+  .seat .bb { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .seat .did, .seat .can {
+    display: block; width: calc(100% + 10px); margin: 0 -5px; text-align: left;
+    font: inherit; font-size: 12px; border: 0; background: none; border-radius: 5px;
+    padding: 3px 5px; color: var(--ink-3); white-space: nowrap;
+  }
+  /* What was actually done to get here, so the strip reads as the line played
+     rather than as a list of what was possible. */
+  .seat .did { color: var(--ink); background: var(--chip); font-weight: 600; cursor: pointer; }
+  .seat .did:hover { background: var(--fold); }
+  .seat .did::before { content: '‹ '; color: var(--accent); font-weight: 700; }
+  .seat .can { cursor: pointer; color: var(--ink-2); display: flex; align-items: center; gap: 7px; }
+  .seat .can:hover { background: var(--chip); color: var(--ink); }
+  .seat .can::after { content: '›'; color: var(--accent); font-weight: 700; margin-left: auto; }
+  /* An action that ends the hand is not one more step into the tree. */
+  .seat .can.ends::after { content: '■'; color: var(--ink-3); font-size: 9px; }
+  .seat .can i { width: 8px; height: 8px; border-radius: 2px; display: block; flex: none; }
+  .seat .can .pct { color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .seat .did .you {
+    color: var(--accent); font-weight: 700; font-size: 11px; margin-left: 5px;
+  }
+  .seat .rule {
+    margin: 6px -9px 4px; border-top: 1px solid var(--line); padding: 5px 9px 0;
+    font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .seat .idle { font-size: 11px; color: var(--ink-3); padding: 3px 0; }
+
+  .acting { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .turn {
+    font-size: 12px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-3); margin-right: 4px;
+  }
+
+
+  /* Typing a hand in. The table is a range and this is the one hand in it the
+     reader holds, so it gets its own line above the table and its own row
+     highlight inside it. */
+  .yours {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px 0; font-size: 13px; color: var(--ink-2);
+  }
+  .yours label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .yours input {
+    background: var(--raised); border: 1px solid var(--line); border-radius: 7px;
+    color: var(--ink); font: inherit; font-size: 13px; padding: 6px 10px; width: 148px;
+  }
+  .yours input:focus { outline: none; border-color: var(--accent); }
+  .yours input.bad { border-color: var(--raise); }
+  .yours button {
+    background: none; border: 0; color: var(--ink-3); font: inherit; font-size: 12px;
+    cursor: pointer; text-decoration: underline;
+  }
+  .yours button:hover { color: var(--ink); }
+  .yours .cards { font-weight: 600; color: var(--ink); letter-spacing: .06em; }
+  .yours .mix { color: var(--ink-2); }
+  .yours .mix b { color: var(--ink); font-weight: 600; }
+  .yours .stale { color: var(--pat); }
+  .yours .as { color: var(--ink-3); }
+  .odds { color: var(--ink-2); }
+  .odds.thinLine { color: var(--pat); font-weight: 600; }
+
+  /* The reader's own hand, wherever it sits in the table. */
+  tr.mine td { background: rgba(91, 143, 249, 0.14) !important; opacity: 1; }
+  tr.mine td.hand { box-shadow: inset 3px 0 0 var(--accent); }
+
+  .waiting { color: var(--pat); }
+  .ended {
+    padding: 22px 14px 26px; font-size: 15px; color: var(--ink-2);
+  }
+  .ended strong { color: var(--ink); font-size: 17px; }
 </style>
 </head>
 <body>
@@ -177,18 +306,32 @@
   </div>
 
   <div class="panel">
-    <h2>The line — click a decision to read it</h2>
-    <div class="line" id="line"></div>
+    <h2>The line — click an action to follow it</h2>
+    <div class="nav">
+      <div class="seats" id="seats"></div>
+      <div class="acting" id="acting" hidden></div>
+      <p class="note" id="navNote" style="margin: 0; padding: 10px 0 14px;"></p>
+    </div>
   </div>
 
   <div class="panel">
     <h2 id="tableTitle">Range</h2>
     <p class="note" id="path" style="padding: 10px 14px 0; margin: 0;"></p>
+    <div class="yours">
+      <label for="handInput">Your hand</label>
+      <input id="handInput" type="text" spellcheck="false" autocomplete="off"
+             placeholder="As 3h 9d 9c" aria-describedby="handSays">
+      <button id="handClear" type="button" hidden>clear</button>
+      <span id="handSays"></span>
+      <label class="weigh" title="every row as tall as its share of the range">
+        <input type="checkbox" id="weighToggle"> Range weighted
+      </label>
+    </div>
     <div class="legend" id="legend"></div>
     <div class="body" style="padding-top: 0;">
       <table>
         <thead>
-          <tr><th>Hand</th><th id="hShare">% of range</th><th style="text-align:left">Strategy</th><th id="h1"></th><th id="h2"></th><th id="h3"></th><th id="h4"></th></tr>
+          <tr><th class="sorts" data-sort="hand">Hand</th><th class="sorts" data-sort="share" id="hShare">% of range</th><th style="text-align:left">Strategy</th><th class="sorts" data-sort="0" id="h1"></th><th class="sorts" data-sort="1" id="h2"></th><th class="sorts" data-sort="2" id="h3"></th><th class="sorts" data-sort="3" id="h4"></th></tr>
         </thead>
         <tbody id="rows"></tbody>
       </table>
@@ -210,7 +353,166 @@
 <script>
 const NAME = ['A','2','3','4','5','6','7','8','9','T','J','Q','K'];
 const SIZE = { 4: 'badugi', 3: 'tri', 2: 'two-card', 1: 'one-card' };
-let data = null, at = 0;
+// The page rests on the report's first decision and browses from there, so the
+// index never moves off zero; it stays named for what it is.
+let data = null;
+const at = 0;
+
+/**
+ * Following the action.
+ *
+ * The report file holds fourteen decisions and the tree holds 226,098, so
+ * anything past the summary comes from the server, which keeps the checkpoint
+ * open and hands out one node at a time. `browsing` is that node when a line is
+ * being followed and null when the page is showing a decision the report
+ * already contains - both have the same shape, so everything downstream reads
+ * whichever is current without knowing which it got.
+ */
+let browsing = null;
+let line = null;
+let waitingFor = null;
+
+const current = () => (browsing ? browsing.node : data.spots[at]);
+const currentLine = () => (browsing ? line : (data.spots[at].steps ?? []));
+const spotName = () => new URLSearchParams(location.search).get('spot') || 'btn-bb';
+
+/** Keeps the address bar on the line being read, so it can be shared. */
+function rememberLine() {
+  const url = new URL(location.href);
+  url.searchParams.set('spot', spotName());
+  if (browsing && line.length) url.searchParams.set('line', line.join(','));
+  else url.searchParams.delete('line');
+  history.replaceState(null, '', url);
+}
+
+/**
+ * Walks to a line and shows it.
+ *
+ * The first call of a session pays for the checkpoint being read - five
+ * gigabytes, about a minute - so the server answers `loading` and this polls
+ * rather than leaving the page looking broken.
+ */
+async function go(steps) {
+  line = steps.slice();
+  const url = `/api/badugi-node?spot=${encodeURIComponent(spotName())}`
+    + `&line=${steps.join(',')}`
+    + (mine ? `&hand=${mine.index}` : '');
+  try {
+    const body = await (await fetch(url)).json();
+    if (body.loading) {
+      waitingFor = steps.join(',');
+      renderNav({ loading: true, since: body.since ?? 0 });
+      setTimeout(() => { if (waitingFor === steps.join(',')) go(steps); }, 2500);
+      return;
+    }
+    waitingFor = null;
+    if (!body.ok) { renderNav({ error: body.error }); return; }
+    browsing = body;
+    rememberLine();
+    render();
+  } catch (error) {
+    renderNav({ error: String(error.message ?? error) });
+  }
+}
+
+
+/**
+ * The seat strip, which is also the navigation.
+ *
+ * A decision belongs to a seat, so the seats are how you move between them: the
+ * question is "what does the big blind do here", not "what is node 4". Each
+ * card lists what its seat has already done - every one a way back to the
+ * decision where it did it - and the seat to act lists what it may do next.
+ *
+ * Badugi runs to four betting rounds and three draws, so a seat's card is a
+ * column of actions where a push-fold table has one line. The seats that folded
+ * before the spot begins are shown too, greyed: they are why this is the spot
+ * it is, and leaving them out makes a six-handed game look heads-up.
+ */
+function renderNav(state = {}) {
+  const seats = document.getElementById('seats');
+  const acting = document.getElementById('acting');
+  const note = document.getElementById('navNote');
+  acting.hidden = true;
+
+  if (state.loading) {
+    acting.hidden = false;
+    acting.innerHTML = '<span class="turn waiting">opening the solve…</span>';
+    note.textContent = 'Reading the checkpoint. A couple of seconds, once.';
+    return;
+  }
+  if (state.error) {
+    acting.hidden = false;
+    acting.innerHTML = `<span class="turn warn">${state.error}</span>`;
+    note.textContent = '';
+    return;
+  }
+  if (!data) return;
+
+  const spot = current();
+  const ended = browsing && browsing.ending;
+  const toAct = ended ? -1 : (browsing ? browsing.node.seat : spot.seat);
+  const taken = browsing ? browsing.path : null;
+
+  // Every seat, in the order they act before the draw.
+  const order = [2, 3, 4, 5, 0, 1].filter((seat) => seat < data.names.length);
+  // What the seats ahead of the spot did. It is fixed - the spot is defined as
+  // the line where they did it - so it is shown without being clickable, and a
+  // button that raised reads as having raised rather than as having done
+  // nothing at all.
+  const prefix = new Map();
+  (data.line ?? []).forEach((act, i) => { if (order[i] !== undefined) prefix.set(order[i], act); });
+  seats.innerHTML = order.map((seat) => {
+    const who = data.names[seat];
+    const acted = taken ? taken.map((step, i) => ({ ...step, i })).filter((s) => s.seat === seat) : [];
+    const isLive = (browsing && browsing.live ? browsing.live : data.live ?? []).includes(seat);
+
+    // A seat that folded before the spot starts: shown, but there is nothing of
+    // it to read.
+    if (!isLive && seat !== toAct && !acted.length) {
+      return `<div class="seat out"><div class="who"><span class="pos">${who}</span></div>`
+        + `<div class="idle">${prefix.get(seat) ?? 'folds'}</div></div>`;
+    }
+
+    // What the reader's own hand did at each of this seat's decisions, beside
+    // what the seat did. Only up to that seat's first draw: after it, the hand
+    // in front of them is not the hand they typed.
+    const did = acted.map((step) => {
+      const yours = mine && step.yours && !step.yours.stale
+        ? ` <span class="you">${(100 * step.yours.mix[step.at]).toFixed(0)}%</span>` : '';
+      return `<button class="did" data-to="${step.i}">${step.label}${yours}</button>`;
+    });
+    const can = seat === toAct
+      ? spot.actions.map((a, i) => {
+        const leads = browsing ? browsing.node.actions[i].leadsTo : 'decision';
+        const terminal = leads !== 'decision';
+        return `<button class="can${terminal ? ' ends' : ''}" data-take="${i}" `
+          + `title="${terminal ? leads : 'follow this'}">`
+          + `<i class="${classOf(a)}"></i>${a.label}`
+          + `<span class="pct">${spot.overall[i].toFixed(0)}%</span></button>`;
+      })
+      : [];
+
+    return `<div class="seat${seat === toAct ? ' acting' : ''}">`
+      + `<div class="who"><span class="pos">${who}</span>`
+      + `${seat === toAct ? '<span class="bb">to act</span>' : ''}</div>`
+      + (prefix.has(seat) ? `<div class="idle">${prefix.get(seat)}</div>` : '')
+      + (did.length ? did.join('') : (can.length || prefix.has(seat) ? '' : '<div class="idle">—</div>'))
+      + (can.length && did.length ? '<div class="rule">plays</div>' : '')
+      + can.join('')
+      + '</div>';
+  }).join('');
+
+  if (ended) {
+    acting.hidden = false;
+    acting.innerHTML = `<span class="turn">${browsing.ending.what} &mdash; the hand is over</span>`;
+    note.textContent = 'Click a seat’s action above to step back into the line.';
+    return;
+  }
+  note.innerHTML = browsing
+    ? 'Click an action to follow it, or an action already taken to go back to it.'
+    : 'Click an action to follow it anywhere in the tree &mdash; past where the report stops.';
+}
 
 /* A label's colour class. Draw counts and betting actions share this page, so
    the mapping is by what the action is rather than by its position. */
@@ -255,8 +557,12 @@ function nameOf(hand) {
    trained those rows on exploration traffic, which is noise wearing a number.
    `reach` is absent where it cannot be had (see the report), and then this is
    the deck and the page says so. */
-const weightOf = (spot, i) => data.hands[i].combos
-  * (spot.reach ? spot.reach[i] : (spot.seen ? spot.seen[i] : 1));
+const weightOf = (spot, i) => (spot.reach
+  ? data.hands[i].combos * spot.reach[i]
+  // Past a draw the weight is measured rather than derived: how much of this
+  // node's traffic the hand actually was. It already counts how often the hand
+  // turns up, so the deck's combination count is not applied on top of it.
+  : (spot.traffic ? spot.traffic[i] : data.hands[i].combos));
 
 /* The 1,092 values grouped the way hands are talked about: badugis and tris by
    their high card, two-card and monotone holdings by name. Weighted as above,
@@ -287,6 +593,174 @@ function grouped(spot) {
   return [...rows.values()].sort((x, y) => (y.size - x.size)
     || (x.ranks[0] - y.ranks[0]) || ((x.ranks[1] ?? 0) - (y.ranks[1] ?? 0)));
 }
+
+/**
+ * The hand the reader is holding.
+ *
+ * A range table answers "what does this spot do"; a player at a table is asking
+ * "what do I do". Those are the same question only once the four cards in front
+ * of them have been turned into one of the 1,092 values the solve is indexed
+ * by, which is a rule of the game rather than anything the solve knows: take
+ * the largest subset with no repeated rank and no repeated suit, and where two
+ * subsets are the same size take the lower one.
+ *
+ * The value is looked up by the label the solve already ships - `4-card 432A`,
+ * `3-card Q76` - so the evaluation here and the one the solver ran have to
+ * agree in writing, and a hand that produced a label nothing matches is a bug
+ * that says so rather than a row quietly highlighted in the wrong place.
+ */
+const RANK_IN = { A: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, T: 9, J: 10, Q: 11, K: 12 };
+const SUIT_IN = { s: 0, h: 1, d: 2, c: 3, '♠': 0, '♥': 1, '♦': 2, '♣': 3 };
+const SUIT_OUT = ['♠', '♥', '♦', '♣'];
+
+let mine = null;
+
+/** Four cards from what somebody typed, or null with a reason. */
+function readCards(text) {
+  const cleaned = String(text).toUpperCase().replace(/10/g, 'T').replace(/[^0-9A-Z♠♥♦♣]/g, '');
+  const cards = [];
+  for (let i = 0; i < cleaned.length; i += 2) {
+    const rank = RANK_IN[cleaned[i]];
+    const suit = SUIT_IN[(cleaned[i + 1] ?? '').toLowerCase()] ?? SUIT_IN[cleaned[i + 1]];
+    if (rank === undefined || suit === undefined) return null;
+    cards.push({ rank, suit });
+  }
+  if (cards.length !== 4) return null;
+  // Four of the same card is not a hand anybody was dealt.
+  const seen = new Set(cards.map((c) => `${c.rank}/${c.suit}`));
+  if (seen.size !== 4) return null;
+  return cards;
+}
+
+/** The badugi value of four cards: biggest subset that works, then the lowest. */
+function valueOf(cards) {
+  let best = null;
+  for (let mask = 1; mask < 16; mask += 1) {
+    const pick = cards.filter((_, i) => mask & (1 << i));
+    const ranks = new Set(pick.map((c) => c.rank));
+    const suits = new Set(pick.map((c) => c.suit));
+    if (ranks.size !== pick.length || suits.size !== pick.length) continue;
+    const order = pick.map((c) => c.rank).sort((a, b) => b - a);
+    if (!best || order.length > best.length) { best = order; continue; }
+    if (order.length < best.length) continue;
+    for (let i = 0; i < order.length; i += 1) {
+      if (order[i] === best[i]) continue;
+      if (order[i] < best[i]) best = order;
+      break;
+    }
+  }
+  return best;
+}
+
+const NAMES = ['A', '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K'];
+const showCards = (cards) => [...cards]
+  .sort((a, b) => a.rank - b.rank)
+  .map((c) => NAMES[c.rank] + SUIT_OUT[c.suit]).join(' ');
+
+/** What the reader typed, evaluated and looked up. Null when it is not a hand. */
+function readHand(text) {
+  const cards = readCards(text);
+  if (!cards) return null;
+  const best = valueOf(cards);
+  const label = `${best.length}-card ${best.map((r) => NAMES[r]).join('')}`;
+  const index = data.labels.indexOf(label);
+  if (index < 0) return null;
+  return { cards, index, label, shown: showCards(cards), klass: nameOf(data.hands[index]) };
+}
+
+/** The line above the table: the hand, and what it does where you are looking. */
+function renderMine() {
+  const says = document.getElementById('handSays');
+  const clear = document.getElementById('handClear');
+  const input = document.getElementById('handInput');
+  clear.hidden = !mine;
+  input.classList.toggle('bad', !!input.value.trim() && !mine);
+
+  if (!mine) {
+    says.innerHTML = input.value.trim()
+      ? '<span class="warn">four cards, like <b>As 3h 9d 9c</b></span>'
+      : '';
+    return;
+  }
+
+  const spot = current();
+  if (browsing && browsing.ending) {
+    says.innerHTML = `<span class="cards">${mine.shown}</span> &mdash; ${mine.klass}`;
+    return;
+  }
+
+  // Past its own draw the seat no longer holds what was typed, and the honest
+  // answer is to say so rather than to price a hand that has been thrown away.
+  const stale = browsing && browsing.node.yours ? browsing.node.yours.stale : !spot.reach;
+  const mix = spot.hands[mine.index];
+  // Whose decision this is. The line moves between seats, so a hand priced
+  // without saying which seat is holding it answers a question nobody asked.
+  const who = browsing ? browsing.node.who : data.names[spot.seat];
+  const head = `<span class="cards">${mine.shown}</span> &mdash; ${mine.klass}`
+    + ` &mdash; <span class="as">as ${who}</span> &mdash; `;
+
+  if (stale) {
+    says.innerHTML = head + '<span class="stale">this seat has drawn, so the hand it holds is '
+      + 'no longer the one you typed</span>';
+    return;
+  }
+
+  // **Whether the hand is even here comes before what it does.** A strategy
+  // table answers for every hand, including the ones this line has already
+  // excluded: a nine-high tri that patted the first draw takes that line about
+  // never, and printing "call 100%" beside it reads as advice.
+  //
+  // The test is how often *this hand* gets here, never its share of the range.
+  // Any one of 1,092 values is a sliver of a range by definition - the average
+  // is a tenth of a percent of it - so comparing the two flags every hand ever
+  // typed as rare, which is a statement about the deck and not about the line.
+  const arrives = spot.reach
+    ? spot.reach[mine.index]
+    : (spot.traffic ? spot.traffic[mine.index] * data.hands.length : 1);
+
+  if (arrives < 0.002) {
+    says.innerHTML = `${head}<span class="stale">this hand does not take this line &mdash; `
+      + `it gets here ${arrives <= 0 ? 'never' : 'well under a percent of the time'}</span>`;
+    return;
+  }
+
+  const rarely = arrives < 0.05
+    ? ` <span class="thin">reaches here ${(100 * arrives).toFixed(1)}% of the time it is dealt</span>`
+    : '';
+  says.innerHTML = head
+    + `<span class="mix">${spot.actions.map((a, i) => `${a.label} <b>${(100 * mix[i]).toFixed(0)}%</b>`).join(' · ')}</span>`
+    + rarely;
+}
+
+/**
+ * How the hands inside an open class are ordered.
+ *
+ * A class is a summary and the drill-down is where its disagreements live, so
+ * the useful question changes with what is being looked for: 'which of these
+ * nine-high tris is the boundary' wants hand order, and 'which of them are the
+ * ones still raising' wants the raising column. Both are a click on the header
+ * that names them.
+ *
+ * Hand order is the default and runs worst first, so the hand the class is
+ * named for - its boundary - reads last, beside the class row above it.
+ */
+// Rows sized by their share of the range, rather than all alike.
+let weighted = false;
+let sortBy = 'hand';
+let sortDir = -1;
+
+function sortValue(spot, i, key) {
+  if (key === 'hand') return i;
+  if (key === 'share') return weightOf(spot, i);
+  return spot.hands[i][Number(key)] ?? 0;
+}
+
+const bySort = (spot) => (a, b) => {
+  const gap = sortValue(spot, a, sortBy) - sortValue(spot, b, sortBy);
+  // Ties keep hand order, so a column where half the class plays identically
+  // still reads as a range rather than as an arbitrary shuffle.
+  return gap ? sortDir * gap : a - b;
+};
 
 /** A hand's cards as a player says them: high to low, ace low. */
 const cardsOf = (hand) => hand.ranks.map((r) => NAME[r]).reverse().join('');
@@ -324,19 +798,48 @@ function spread(spot, members) {
 }
 
 function render() {
-  const spot = data.spots[at];
+  renderNav();
+  // A line that ends the hand has no strategy to show; the navigator says so.
+  if (browsing && browsing.ending) {
+    document.getElementById('tableTitle').textContent = browsing.ending.what;
+    document.getElementById('path').innerHTML = '';
+    document.getElementById('legend').innerHTML = '';
+    document.getElementById('rows').innerHTML = '<tr><td colspan="7" class="ended">'
+      + `<strong>${browsing.ending.what}.</strong> Nobody has a decision left here.</td></tr>`;
+    return;
+  }
+
+  const spot = current();
   document.getElementById('tableTitle').textContent = spot.what;
 
   // Where this decision sits, and what its numbers are weighted by - which is
   // the difference between "of the hands that are here" and "of the deck".
-  document.getElementById('hShare').textContent = spot.reach ? '% of range' : '% of deck';
+  // Sampled traffic is a range too - a measured one - so only a table with
+  // neither is showing the deck.
+  document.getElementById('hShare').textContent = (spot.reach || spot.traffic)
+    ? '% of range' : '% of deck';
+  const walked = browsing
+    ? browsing.path.map((s) => `${s.who} ${s.label}`).join(' · ')
+    : spot.path;
+  // **How often the line happens, before anything about what is played on it.**
+  // Two decisions of the same shape can disagree completely and both be right -
+  // one reached every 29 hands, the other every 3,250 - and without this the
+  // page presents them identically.
+  const odds = browsing && browsing.reached != null && browsing.path.length
+    ? (browsing.reached >= 0.01
+      ? `<span class="odds">reached ${(100 * browsing.reached).toFixed(1)}% of the time</span>`
+      : `<span class="odds thinLine">reached once in ${Math.round(1 / browsing.reached).toLocaleString()} hands &mdash; the strategy below is built on very little traffic</span>`)
+    : '';
   document.getElementById('path').innerHTML = [
-    spot.path ? `<strong>${spot.path}</strong>` : '<strong>the first decision</strong>',
+    walked ? `<strong>${walked}</strong>` : '<strong>the first decision</strong>',
     spot.branch ? ` &mdash; ${spot.branch}` : '',
+    odds ? ` &mdash; ${odds}` : '',
     spot.reach ? '' : ' &mdash; <span class="warn">weighted by the deck: this seat has '
       + 'drawn, so the hand it holds is not the hand it was dealt and reach cannot be '
-      + 'carried through the draw. Hands the solve never saw here are dropped, but what '
-      + 'is left is how often a hand is dealt, not how often it arrives.</span>',
+      + 'carried through the draw. What is shown instead is what the solve measured: '
+      + 'how much of this decision&rsquo;s traffic each hand actually was, over forty million '
+      + 'iterations. Classes below a twentieth of a percent of it are left out, because '
+      + 'their frequencies are made of a handful of visits.</span>',
   ].join('');
 
   document.getElementById('legend').innerHTML = spot.actions
@@ -347,13 +850,44 @@ function render() {
     document.getElementById(id).textContent = spot.actions[i] ? spot.actions[i].label : '';
   });
 
+  // Which header is sorting, and which way. A column with no action behind it
+  // is not a control.
+  document.querySelectorAll('thead th.sorts').forEach((th) => {
+    const key = th.dataset.sort;
+    const live = key === 'hand' || key === 'share' || spot.actions[Number(key)];
+    th.hidden = false;
+    th.classList.toggle('on', live && key === String(sortBy));
+    th.tabIndex = live ? 0 : -1;
+    th.style.cursor = live ? 'pointer' : 'default';
+    const arrow = live && key === String(sortBy)
+      ? `<span class="dir">${sortDir < 0 ? '▾' : '▴'}</span>` : '';
+    const label = key === 'hand' ? 'Hand'
+      : key === 'share' ? ((spot.reach || spot.traffic) ? '% of range' : '% of deck')
+        : (spot.actions[Number(key)] ? spot.actions[Number(key)].label : '');
+    th.innerHTML = label + arrow;
+  });
+
   const all = grouped(spot);
   const total = all.reduce((s, r) => s + r.combos, 0);
   // A class that never arrives is not a row - that is how a five-high badugi
-  // ends up in a table of hands that all three-bet before the draw. The test is
-  // how much of the class gets here, never how big the class is: a monotone
-  // nine is 0.006% of the deck and belongs in the table whenever it is live.
-  const rows = all.filter((r) => r.dealt > 0 && r.combos / r.dealt >= 0.002);
+  // ends up in a table of hands that all three-bet before the draw.
+  //
+  // Where reach is carried the test is how much of the class gets here, never
+  // how big the class is: a monotone nine is 0.006% of the deck and belongs in
+  // the table whenever it is live. Where the weight is sampled traffic the test
+  // is its share of the node, because a class the solve touched a handful of
+  // times has a frequency made of those few visits - which is how a two-card
+  // hand came to show a raising number in a three-bet pot it arrives in once in
+  // a million.
+  const dealtAll = all.reduce((x, r) => x + r.dealt, 0);
+  const rows = spot.reach
+    ? all.filter((r) => r.dealt > 0 && r.combos / r.dealt >= 0.002)
+    : all.filter((r) => r.combos / (total || 1) >= 0.0005);
+  // The widest row sets the scale, so the biggest class fills the column and
+  // everything else is drawn against it. Linear in the share: exaggerating the
+  // small ones would undo the only thing this view is for.
+  const widest = rows.reduce((most, r) => Math.max(most, r.combos / (total || 1)), 0) || 1;
+  const widthOf = (share) => `${(100 * (share / widest)).toFixed(2)}%`;
   const blanks = '<td></td>'.repeat(4 - spot.actions.length);
   let lastSize = null;
   const html = [];
@@ -362,14 +896,17 @@ function render() {
     const start = lastSize !== null && r.size !== lastSize ? ' group-start' : '';
     lastSize = r.size;
     const cells = spot.actions.map((_, i) => {
-      const mine = 100 * r.w[i] / r.combos;
-      if (!versus) return `<td>${mine.toFixed(1)}%</td>`;
+      const here = 100 * r.w[i] / r.combos;
+      // Comparing needs the same decision in both solves, and only the report's
+      // own decisions are indexed alike; a browsed node has no counterpart to
+      // line up with, so the delta column stands down rather than guessing.
+      if (!versus || browsing) return `<td>${here.toFixed(1)}%</td>`;
       let theirs = 0;
       for (const h of r.members) theirs += weightOf(spot, h) * (versus.spots[at]?.hands[h]?.[i] ?? 0);
-      const d = (100 * theirs / r.combos) - mine;
+      const d = (100 * theirs / r.combos) - here;
       const sign = d >= 0 ? '+' : '';
       const tone = Math.abs(d) < 0.5 ? 'var(--ink-3)' : d > 0 ? 'var(--call)' : 'var(--raise)';
-      return `<td>${mine.toFixed(1)}% <span style="color:${tone};font-size:11px">${sign}${d.toFixed(1)}</span></td>`;
+      return `<td>${here.toFixed(1)}% <span style="color:${tone};font-size:11px">${sign}${d.toFixed(1)}</span></td>`;
     }).join('');
     const gap = spread(spot, r.members);
     const single = r.members.length === 1;
@@ -379,21 +916,37 @@ function render() {
       : `<span class="twist" aria-hidden="true">▸</span>`;
     const warn = gap >= 0.25 && !single
       ? `<span class="split" title="widest disagreement inside this class">±${(100 * gap).toFixed(0)}</span>` : '';
-    html.push(`<tr class="klass${start}" data-row="${index}"${single ? '' : ' tabindex="0"'}>`
+    // Dimmed when the row is thin *because of the line*, not because the hand is
+    // uncommon. A four-high badugi is 0.01% of the deck everywhere; at the first
+    // decision that is all it is, and its strategy there is as solid as any. One
+    // that called a three-bet is 0.01% of the deck and a two-hundredth of that
+    // share of the range - the line has all but excluded it, and the frequency
+    // beside it is made of the few visits that got through.
+    const share = r.combos / (total || 1);
+    const ofDeck = r.dealt / (dealtAll || 1);
+    const rare = (spot.traffic ? share < 0.001 : (share < 0.001 && share < ofDeck / 5))
+      ? ' rare' : '';
+    // The class the reader's own hand is in, so it can be found without
+    // reading down 112 rows.
+    const holdsMine = mine && r.members.includes(mine.index) ? ' mine' : '';
+    if (holdsMine && !single) open.add(index);
+    html.push(`<tr class="klass${start}${rare}${holdsMine}" data-row="${index}" `
+      + `style="--w:${widthOf(r.combos / (total || 1))}" `
+      + `title="${r.key} - ${(100 * r.combos / total).toFixed(2)}% of the range"${single ? '' : ' tabindex="0"'}>`
       + `<td class="hand">${mark}${r.key}${warn}</td>`
       + `<td class="combos">${(100 * r.combos / total).toFixed(2)}%</td>`
       + `<td class="strategy"><div class="bar">${barOf(spot, r.w, r.combos)}</div></td>`
       + `${cells}${blanks}</tr>`);
 
     if (!single) {
-      // Worst first inside a class, so the boundary hand - the one the class is
-      // named for - reads last.
-      const members = [...r.members].sort((a, b) => b - a);
+      const members = [...r.members].sort(bySort(spot));
       for (const i of members) {
         const hand = data.hands[i];
         const mix = spot.hands[i];
         const inner = spot.actions.map((_, a) => `<td>${(100 * mix[a]).toFixed(1)}%</td>`).join('');
-        html.push(`<tr class="member" data-of="${index}" hidden>`
+        html.push(`<tr class="member${mine && i === mine.index ? ' mine' : ''}" data-of="${index}" `
+          + `style="--w:${widthOf(weightOf(spot, i) / (total || 1))}" `
+          + `title="${cardsOf(data.hands[i])} - ${(100 * weightOf(spot, i) / total).toFixed(3)}% of the range" hidden>`
           + `<td class="hand">${cardsOf(hand)}</td>`
           + `<td class="combos">${(100 * weightOf(spot, i) / total).toFixed(3)}%</td>`
           + `<td class="strategy"><div class="bar">${barOf(spot, mix.map((v) => v), 1)}</div></td>`
@@ -402,13 +955,9 @@ function render() {
     }
   });
   document.getElementById('rows').innerHTML = html.join('');
+  document.querySelector('table').classList.toggle('weighted', weighted);
+  renderMine();
 
-  // Scoped to the line: the solve switcher's buttons are steps too, and an
-  // unscoped selector marks the decision two places up the row from the one
-  // being read.
-  [...document.querySelectorAll('#line .step')].forEach((el, i) => {
-    el.setAttribute('aria-current', String(i === at));
-  });
   open.forEach((index) => toggle(index, true));
 }
 
@@ -427,6 +976,48 @@ function toggle(index, force) {
     row.hidden = !wanted;
   });
 }
+
+/**
+ * Sorting the drill-down.
+ *
+ * A first click on a column sorts by it, biggest first, which is what somebody
+ * asking 'which of these raise' wants to see. A second click turns it over. The
+ * classes are not touched - only the hands inside an open one - because the
+ * order of the classes is what makes the table read as a range.
+ */
+// Typing is answered as it happens - nobody should have to press anything to
+// find out whether four cards were understood.
+document.getElementById('handInput').addEventListener('input', (event) => {
+  mine = readHand(event.target.value);
+  // A browsed line carries what the hand did at each step, so a new hand means
+  // asking again; the report's own decisions need no round trip.
+  if (browsing) go(line); else render();
+});
+document.getElementById('weighToggle').addEventListener('change', (event) => {
+  weighted = event.target.checked;
+  render();
+});
+document.getElementById('handClear').addEventListener('click', () => {
+  document.getElementById('handInput').value = '';
+  mine = null;
+  render();
+});
+
+document.querySelector('thead').addEventListener('click', (event) => {
+  const th = event.target.closest('th.sorts');
+  if (!th || th.tabIndex < 0) return;
+  const key = th.dataset.sort;
+  if (key === String(sortBy)) sortDir = -sortDir;
+  else { sortBy = key; sortDir = -1; }
+  render();
+});
+document.querySelector('thead').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const th = event.target.closest('th.sorts');
+  if (!th || th.tabIndex < 0) return;
+  event.preventDefault();
+  th.click();
+});
 
 document.getElementById('rows').addEventListener('click', (event) => {
   const row = event.target.closest('tr.klass');
@@ -457,72 +1048,51 @@ async function start() {
 
   document.getElementById('facts').innerHTML = [
     ['Hand values', `${body.hands.length.toLocaleString()}`, 'every badugi hand, nothing bucketed'],
-    ['Button opens', `${body.preset.share.toFixed(1)}%`, 'preset, not solved'],
+    // A spot that starts before anyone has acted presets nobody, and saying so
+    // is the most interesting fact about it.
+    body.preset
+      ? ['Button opens', `${body.preset.share.toFixed(1)}%`, 'preset, not solved']
+      : ['Ranges', 'both solved', 'nothing preset'],
     ['Draws', body.config.maxDraw.join(','), `${body.config.limit.cap} bets a round`],
     ['Entry cap', 'none', 'two players left, so none is needed'],
   ].map(([k, v, t]) => `<div><div class="k">${k}</div><div class="v">${v}</div><div class="thin">${t}</div></div>`).join('');
 
-  document.getElementById('caveat').innerHTML =
-    '<strong>Exact except for one thing.</strong> No hand abstraction, no entry cap, no rollout, '
-    + 'played to showdown. The button&rsquo;s opening range is an assumption the solve inherits rather '
-    + 'than tests &mdash; change it and every number here changes.';
+  // What the solve rests on is different for a spot that presets a range and a
+  // spot that presets nobody, and saying the wrong one contradicts the panel
+  // directly above it.
+  document.getElementById('caveat').innerHTML = body.preset
+    ? '<strong>Exact except for one thing.</strong> No hand abstraction, no entry cap, no rollout, '
+      + 'played to showdown. The button&rsquo;s opening range is an assumption the solve inherits '
+      + 'rather than tests &mdash; change it and every number here changes.'
+    : '<strong>Nothing here is assumed.</strong> No hand abstraction, no entry cap, no rollout, '
+      + 'played to showdown &mdash; and both seats were still to act, so both strategies came out '
+      + 'of the solve rather than going into it. What is left: the four folded seats are dealt '
+      + 'uniformly rather than out of the hands they would actually fold'
+      + `${body.config && body.config.allowLimp === false
+        ? ', and the unopened pot is raise-or-fold, so hands that would complete have to raise '
+          + 'or fold instead' : ''}.`;
 
-  // Branches are lines nobody continues on - the snows - so they are labelled
-  // and set apart rather than run on from the main line as though a player
-  // would reach them by calling.
-  let branch;
-  document.getElementById('line').innerHTML = body.spots.map((s, i) => {
-    const head = s.branch !== branch
-      ? `<div class="branch">${s.branch ? s.branch : 'the line everyone continues on'}</div>`
-      : '';
-    branch = s.branch;
-    return head
-      + `<button class="step" data-i="${i}"><span class="who">${s.what}</span>`
-      + `<span class="mix">${s.actions.map((a, j) => `${a.label} ${s.overall[j].toFixed(0)}%`).join(' · ')}</span></button>`;
-  }).join('');
-  document.getElementById('line').addEventListener('click', (event) => {
-    const button = event.target.closest('.step');
-    if (!button) return;
-    at = Number(button.dataset.i);
-    render();
+  // Taking an action walks the tree; a crumb walks back up it. Both go through
+  // the server, which is the only thing that knows the decisions the report
+  // does not contain.
+  document.getElementById('seats').addEventListener('click', (event) => {
+    const forward = event.target.closest('.can');
+    if (forward) { go(currentLine().concat(Number(forward.dataset.take))); return; }
+    // An action already taken is a way back to the decision it was taken at.
+    const back = event.target.closest('.did');
+    if (back) go(currentLine().slice(0, Number(back.dataset.to)));
   });
+
+  // A line in the address bar is a shared link into the middle of the tree.
+  const asked = new URLSearchParams(location.search).get('line');
+  if (asked) {
+    render();
+    go(asked.split(',').map(Number).filter((n) => Number.isInteger(n)));
+    return;
+  }
   render();
 }
 
-/**
- * Watch a solve while it runs.
- *
- * The run rewrites its report on a clock, so the page re-reads it and redraws
- * only when the iteration count has moved - redrawing on every poll would throw
- * away the row you were reading. The decision you have selected is kept, since
- * watching one decision settle is the reason to have this at all.
- */
-async function watch() {
-  if (!data) return;
-  try {
-    const which = new URLSearchParams(location.search).get('spot') || 'btn-bb';
-    const response = await fetch('/api/badugi?spot=' + which);
-    const body = await response.json();
-    if (!body.running || body.iterations === data.iterations) return;
-
-    const wasComplete = body.complete;
-    data = body;
-    document.getElementById('meta').textContent =
-      `${body.iterations.toLocaleString()} iterations${wasComplete ? '' : ' so far'}`;
-    document.getElementById('line').querySelectorAll('.step').forEach((button, i) => {
-      const spot = body.spots[i];
-      if (!spot) return;
-      button.querySelector('.mix').textContent = spot.actions
-        .map((a, j) => `${a.label} ${spot.overall[j].toFixed(0)}%`).join(' · ');
-    });
-    render();
-  } catch {
-    // A poll that fails is a server restart or a half-written file; the next
-    // one will do. Nothing here is worth interrupting the page for.
-  }
-}
-
-start().then(() => loadSolves()).then(() => setInterval(watch, 15000));
 </script>
 <script>
 /**
@@ -602,14 +1172,11 @@ async function watch() {
 
     const wasComplete = body.complete;
     data = body;
+    // A line being followed is not the report, and re-rendering it here would
+    // throw the reader back to a decision they had navigated away from.
+    if (browsing) return;
     document.getElementById('meta').textContent =
       `${body.iterations.toLocaleString()} iterations${wasComplete ? '' : ' so far'}`;
-    document.getElementById('line').querySelectorAll('.step').forEach((button, i) => {
-      const spot = body.spots[i];
-      if (!spot) return;
-      button.querySelector('.mix').textContent = spot.actions
-        .map((a, j) => `${a.label} ${spot.overall[j].toFixed(0)}%`).join(' · ');
-    });
     render();
   } catch {
     // A poll that fails is a server restart or a half-written file; the next
@@ -619,56 +1186,6 @@ async function watch() {
 
 start().then(() => loadSolves()).then(() => setInterval(watch, 15000));
 </script>
-<script>
-/**
- * Reading one solve against another.
- *
- * An experiment - a nodelock, a different range - is a separate solve of the
- * same spot, so comparing them is a matter of loading both and showing the
- * difference rather than of re-solving anything. The bars stay the solve being
- * read; the numbers gain a delta column, because a strategy is read as a shape
- * and a difference is read as a number.
- */
-let versus = null;
-let solves = [];
 
-function deltaOf(spotIndex, handIndex, action) {
-  if (!versus) return null;
-  const other = versus.spots[spotIndex];
-  if (!other || !other.hands[handIndex]) return null;
-  return other.hands[handIndex][action] - data.spots[spotIndex].hands[handIndex][action];
-}
-
-async function loadSolves() {
-  try {
-    const list = await (await fetch('/api/badugi-solves')).json();
-    solves = list.solves || [];
-  } catch { solves = []; }
-  if (solves.length < 2) return;
-  const panel = document.getElementById('solvesPanel');
-  panel.hidden = false;
-  const current = new URLSearchParams(location.search).get('spot') || 'btn-bb';
-  document.getElementById('solves').innerHTML = solves.map((name) => {
-    const reading = name === current;
-    const compared = versus && versus.spot === name;
-    return `<button class="step" data-solve="${name}" aria-current="${reading}">`
-      + `<span class="who">${name}${reading ? '  (reading)' : ''}</span>`
-      + `<span class="mix">${compared ? 'comparing against this' : reading ? '' : 'click to compare'}</span>`
-      + `</button>`;
-  }).join('');
-  document.getElementById('solves').addEventListener('click', async (event) => {
-    const button = event.target.closest('.step');
-    if (!button) return;
-    const name = button.dataset.solve;
-    if (name === current) { location.search = `?spot=${name}`; return; }
-    if (versus && versus.spot === name) { versus = null; } else {
-      const body = await (await fetch(`/api/badugi?spot=${name}`)).json();
-      versus = body.running ? body : null;
-    }
-    loadSolves();
-    render();
-  });
-}
-</script>
 </body>
 </html>
